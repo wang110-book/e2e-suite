@@ -253,3 +253,12 @@ test('family：真实仓库能发现成员且 e2e-env-setup 被排除', () => {
   assert.ok(plan.indexOf('test-case-design') < plan.indexOf('blackbox-e2e-test'), 'design 必须在 exec 之前')
   assert.ok(plan.indexOf('report-render') > plan.indexOf('visual-regression'), 'report 必须在 assert 之后')
 })
+
+test('版本号五处一致（不一致则客户端更新不到新版本）', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const repoRoot = path.join(import.meta.dirname, '..')
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'bump.mjs'), '--check'], {
+    cwd: repoRoot, encoding: 'utf8',
+  })
+  assert.equal(r.status, 0, `版本号不一致：\n${r.stdout}\n${r.stderr}\n跑 node tools/bump.mjs <version> 统一`)
+})

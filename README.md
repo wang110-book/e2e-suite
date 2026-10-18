@@ -32,9 +32,33 @@ e2e-suite/                 唯一插件（一体化）
   ├─ hooks/                ZCode Stop/PostToolUse 薄壳
   └─ mcp/server.mjs        MCP stdio 薄壳
 tests/gate-core.test.mjs   门禁与编排的回归测试（node --test，零依赖）
+tools/bump.mjs             统一五处版本号（发版必跑，否则客户端更新不到）
 tools/sync.mjs             本机运行时 → 本仓库（维护者同步改动）
 tools/install.mjs          本仓库 → 本机运行时（维护者部署）
 ```
+
+## 发版流程（重要）
+
+ZCode 的插件更新是**版本号驱动**的：`marketplace.json` 里的 `version` 不变，即使仓库代码变了，客户端执行 `zcode plugins update` 也只会得到 `already up to date`，已安装缓存（`cache/<市场>/<插件>/<版本>/`）不会重新拉取。
+
+所以**每次发版必须改版本号**，且五处要一致：
+
+```bash
+node tools/bump.mjs 1.3.0     # 统一 package.json / 两份 marketplace / plugin.json / server.mjs
+node --test tests/gate-core.test.mjs
+git add -A && git commit -m "..." && git push
+```
+
+`bump.mjs --check` 会校验五处是否一致，已接入测试（第 14 条用例），漏改会被门禁拦下。
+
+客户端更新（三步，缺一不可）：
+
+```bash
+zcode plugins update e2e-suite@e2e-suite   # 先刷新市场再拉新版本
+# 重启 ZCode 宿主 —— hooks 与 MCP 只在启动时加载
+```
+
+版本号不会自动递增，也没有后台轮询：市场目录会自动刷新，但**已安装的插件不会自己更新**。
 
 ## MCP 工具（装完插件即可被 AI 调用）
 
