@@ -1,0 +1,4 @@
+interface:
+  display_name: "视觉回归基线比对"
+  short_description: "截图基线管理与差异比对，守住界面不被无意识改坏走样"
+  default_prompt: "对 WebUI 建立截图基线并在改动后做差异比对，动态内容需遮蔽，阈值内差异放行"

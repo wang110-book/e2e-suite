@@ -1,0 +1,4 @@
+interface:
+  display_name: "API 契约漂移检测"
+  short_description: "接口契约文档、后端实现、运行时行为、前端消费四方比对找漂移"
+  default_prompt: "对系统做 API 契约漂移检测：文档、实现、运行时、前端消费四方比对出漂移清单"

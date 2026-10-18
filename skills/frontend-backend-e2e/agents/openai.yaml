@@ -1,0 +1,4 @@
+interface:
+  display_name: "前后端联动 E2E 测试"
+  short_description: "统筹环境搭建与黑盒断言两技能，做前端-后端双向闭环联动测试"
+  default_prompt: "对本系统做前后端联动测试：先搭环境，再设计联动测试集，浏览器驱动执行，双向往返断言，缺陷闭环回归"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "测试报告渲染"
+  short_description: "把功能矩阵/证据/缺陷清单渲染成可交付的正式测试报告"
+  default_prompt: "汇总本轮测试成员产出，渲染成带证据溯源的正式测试报告"

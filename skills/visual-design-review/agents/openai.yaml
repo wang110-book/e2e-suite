@@ -1,0 +1,4 @@
+interface:
+  display_name: "界面视觉设计审查"
+  short_description: "按设计规则与优秀产品参照审查 WebUI 美观度，截图取证到 CSS 级改法"
+  default_prompt: "对 WebUI 做视觉设计审查：截图矩阵、栅格间距层级色彩规则检查、四态完备性、对照优秀产品出问题清单"

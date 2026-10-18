@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "test-gate": {
+      "command": "node",
+      "args": ["${ZCODE_PLUGIN_ROOT}/mcp/server.mjs"],
+      "timeoutMs": 660000
+    }
+  }
+}

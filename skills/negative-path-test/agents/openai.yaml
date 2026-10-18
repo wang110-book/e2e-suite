@@ -1,0 +1,4 @@
+interface:
+  display_name: "反例与降级路径测试"
+  short_description: "依赖死亡/非法输入/异常状态/越权下验证安全降级与前端如实呈现"
+  default_prompt: "对系统注入反例：依赖死亡、非法输入、异常状态、越权操作，断言安全降级与前端呈现并验证恢复"

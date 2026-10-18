@@ -1,0 +1,41 @@
+---
+name: gate-guide
+description: 测试门禁（test-gate）使用与恢复指南。当被 [test-gate] 打回、想知道门禁当前状态、想手动触发一次完整门禁、或需要重置基线时使用。Explains the test gate lifecycle, MCP tools, and recovery paths.
+---
+
+# 测试门禁指南（gate-guide）
+
+本插件的 hook 会在收工（Stop）时自动把关：碰过 `src/`、`tests/` 或构建清单的回合，必须测试全绿或失败全在基线内才能结束。基线生命周期全自动，**任何情况下都不要靠改测试/删断言来变绿**（AGENTS.md 冻结条款）。
+
+## 被 [test-gate] 打回后怎么办
+
+1. 读打回信息里的失败清单：
+   - `新增失败（基线外、重跑仍红）` → 你的改动引入了确定性红。**修实现**；若行为变更是有意的（比如并行会话更新了语义），向用户确认后再处理测试。
+   - `本仓库曾全绿，现失败（回归）` → 直接当回归修，**不要重置基线**。
+2. 若信息里有 `重跑翻绿 … 判为抖动放行` → 该测试被记了一次 flakyHit（不阻塞）。累计 2 次自动进**隔离区**：隔离期内它红不再打回，但会出现在 `test_gate_status` 的 quarantine 里，连续 10 个全绿回合自动回炉主集。抖动测试该修还是要修（隔离是止血不是治疗）。
+3. 修完再跑一次收工判定即可，无需其他操作。
+
+## 抖动隔离与影响面选择（v0.2 新增，自动，无需配置）
+
+- **抖动隔离**：基线外新增失败时自动重跑一次甄别（确定性复现检验）；翻绿记 flaky、反复翻绿进隔离区。真回归（重跑仍红）照常打回。
+- **TIA 影响面选择**：pytest/go 项目会按本回合脏文件映射只跑受影响的测试/包（省 SMR 磁盘 I/O）；映射不可靠时自动退回全量——**安全侧只多跑、不漏跑**。jest/C++ 聚合 exe 暂为全量。
+- 隔离区在 `test_gate_reset` 时一并清除。
+
+## MCP 工具（主动查询/触发，不等 Stop）
+
+- `test_gate_status` — 只读。检测栈、脏文件、基线、隔离区（quarantine）、**changeSurface 改动面分类**（`jointE2eSuggested=true` 表示本回合前后端双侧都有改动，该做一轮 e2e-suite 联动回归——只提示不自动跑）、日志尾部。
+- `test_gate_run` — 立即完整跑一次门禁（构建+测试+抖动/基线判定）。gate-preflight 技能在联动开跑前用的就是它。
+- `test_gate_reset` — 清基线+绿史+隔离区+脏标记，回到"首红重新立基线"的宽容态。**只在确实要重新宽容存量红时用**。
+
+## 与 e2e-suite 家族的接合（gate-preflight，env 槽）
+
+前后端联动测试开跑前，总控会自动发现 `gate-preflight` 成员：它调 `test_gate_run` 出"门禁绿了才开联动、unit 红先修便宜层"的环境说明（落盘 `<被测系统>/e2e-artifacts/gate-preflight.md`）。unit 级门禁与联动黑盒各守一层：本插件管"每回合快而便宜"，exec 成员管"里程碑全链路"，两层互不越界（联动绝不进 Stop 钩子）。
+
+## 环境变量逃生口（对用户，非模型）
+
+- `TEST_GATE_SKIP=1` — 单次收工跳过。
+- 状态目录：`%TEMP%\zcode-test-gate\<项目哈希>\`（gate.log / baseline.json / quarantine.json / ever-green）。
+
+## 栈检测范围（自动，零配置）
+
+npm/pnpm/yarn/bun（package.json test 脚本）、pytest（+TIA）、cargo、go（+TIA）、dotnet(.sln)、CMake+VS（unit_tests 目标，cmake 路径自动从 CMakeCache 解析）、make（test 目标）。检测不到或测试器缺失 → 放行并记日志（门禁坏了绝不卡会话）。

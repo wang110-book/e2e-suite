@@ -1,0 +1,4 @@
+interface:
+  display_name: "持久化边界测试"
+  short_description: "跨重启/刷新/升级/崩溃验证持久状态与临时状态的边界"
+  default_prompt: "测试系统持久化边界：改状态后跨重启/刷新/升级核对保留与重置是否符合声明"

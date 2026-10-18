@@ -1,0 +1,4 @@
+interface:
+  display_name: "白盒测试套件"
+  short_description: "单元测试/覆盖率/静态分析/Fuzz 补黑盒照不到的内部结构面"
+  default_prompt: "对源码做白盒测试：单测盘点补缺、静态分析扫并发与资源问题、解析入口 Fuzz"

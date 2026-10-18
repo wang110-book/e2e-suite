@@ -1,0 +1,4 @@
+interface:
+  display_name: "黑盒 E2E 自动化断言测试"
+  short_description: "组合测试集设计 + 浏览器驱动 GUI + 后端证据断言的端到端测试执行"
+  default_prompt: "对已就绪的环境执行黑盒 E2E 测试：设计组合测试集、浏览器驱动操作、后端证据断言、出功能矩阵报告"

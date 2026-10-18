@@ -1,0 +1,4 @@
+interface:
+  display_name: "需求侧 UX 验收测试"
+  short_description: "首用旅程/可用性启发式/文案信任/可访问性/响应式/感知性能验收"
+  default_prompt: "以零知识新用户视角对 WebUI 做需求侧验收：首用旅程、启发式十查、文案信任、a11y、响应式、感知性能"
