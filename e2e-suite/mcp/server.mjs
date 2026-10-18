@@ -1,13 +1,93 @@
 #!/usr/bin/env node
 /**
- * test-gate MCP server — 把门禁的可查询能力经标准 MCP 协议暴露：
- *   test_gate_status / test_gate_run / test_gate_reset
+ * e2e-suite MCP server — 把门禁与家族的可查询能力经标准 MCP 协议暴露：
+ *   test_gate_status / test_gate_run / test_gate_reset   （门禁）
+ *   family_skills                                         （家族成员发现 + 编排计划）
  * 拦截本身留在 hooks（MCP 工具只能被模型主动调用，无强制力）。
  * 实现：newline-delimited JSON-RPC 2.0 over stdio（MCP stdio transport），零依赖。
  */
 import { findRoot, runGate, status, reset } from '../lib/gate-core.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { fileURLToPath } from 'node:url'
 
-const SERVER = { name: 'test-gate', version: '0.1.0' }
+const SERVER = { name: 'e2e-suite', version: '1.1.0' }
+
+// ---------- 家族契约发现（纯读，宿主无关） ----------
+// 扫描根：插件自带 skills/（权威发布源）+ 用户运行时 skills 目录 + 项目级 .zcode/skills。
+// 解析 SKILL.md 的「## 家族契约（e2e-suite）」块；
+// 「e2e-suite-暂停」标记（detached）与无契约块的一律不入列。
+const CONTRACT_HEAD = /^##\s*家族契约（e2e-suite）\s*$/m
+const CONTRACT_DETACHED = /家族契约（e2e-suite-暂停）/
+const PHASE_ORDER = ['env', 'design', 'exec', 'assert', 'report']
+
+function skillSearchRoots(projectRoot) {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const roots = [path.join(here, '..', 'skills')]
+  const userSkills = path.join(os.homedir(), '.zcode', 'skills')
+  if (!roots.includes(userSkills)) roots.push(userSkills)
+  if (projectRoot) roots.push(path.join(projectRoot, '.zcode', 'skills'))
+  return roots
+}
+
+function parseContract(md) {
+  const body = md.split(CONTRACT_HEAD)[1]
+  if (!body) return null
+  const block = body.split(/^##\s/m)[0]
+  const get = (key) => {
+    const m = new RegExp(`^-\\s*${key}:\\s*(.+)$`, 'm').exec(block)
+    return m ? m[1].trim() : ''
+  }
+  const phase = get('phase')
+  if (!phase) return null
+  return {
+    phase, before: get('before'), after: get('after'),
+    inputs: get('inputs'), outputs: get('outputs'), idempotent: get('idempotent'),
+  }
+}
+
+function discoverFamily(projectRoot) {
+  const members = []
+  const seen = new Set()
+  for (const root of skillSearchRoots(projectRoot)) {
+    let dirs = []
+    try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name) }
+    catch { continue }
+    for (const d of dirs) {
+      if (seen.has(d)) continue
+      const f = path.join(root, d, 'SKILL.md')
+      let md
+      try { md = fs.readFileSync(f, 'utf8') } catch { continue }
+      if (CONTRACT_DETACHED.test(md)) continue
+      if (!CONTRACT_HEAD.test(md)) continue
+      const c = parseContract(md)
+      if (!c) continue
+      seen.add(d)
+      members.push({ name: d, source: path.dirname(f), ...c })
+    }
+  }
+  // 编排计划：phase 默认序 + before/after 约束（简单稳定排序，冲突时以声明为准提示人工裁决）
+  const rank = (m) => {
+    let r = PHASE_ORDER.indexOf(m.phase)
+    if (r < 0) r = 99 // custom：先按 after 挂到声明的槽位后
+    return r
+  }
+  const plan = members
+    .slice()
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+    .map(m => m.name)
+  // custom 成员有 after 的，尽量排到该成员之后（一次修正，不迭代防环）
+  for (const m of members.filter(x => x.after)) {
+    const anchor = plan.find(n => n === m.after.split(/[,，]/)[0].trim())
+    const i = plan.indexOf(m.name)
+    if (anchor && i >= 0 && plan.indexOf(anchor) >= i) {
+      plan.splice(i, 1); plan.splice(plan.indexOf(anchor) + 1, 0, m.name)
+    }
+  }
+  return { members, plan }
+}
+
 const TOOLS = [
   {
     name: 'test_gate_status',
@@ -24,6 +104,18 @@ const TOOLS = [
     description: '清除该项目门禁状态：基线、绿史、脏标记全部删除（回到"首红重新立基线"的宽容态）。仅当你确实想重新宽容存量红时用。',
     inputSchema: { type: 'object', properties: { project_root: { type: 'string' } }, additionalProperties: false },
   },
+  {
+    name: 'family_skills',
+    description: '发现 e2e-suite 测试技能家族的在册成员（解析各 SKILL.md 的家族契约块），返回成员清单（phase/before/after/inputs/outputs）与按槽位拓扑排序的编排计划。这是家族测试的 MCP 入口：拿到计划后，用宿主 Skill 工具按名单逐个加载成员执行（MCP 工具本身不加载技能——加载与计划确认是宿主/用户的职责，编排红线不变）。可选 phase 过滤。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        project_root: { type: 'string', description: '可选：项目根（扫描其 .zcode/skills 项目级成员）' },
+        phase: { type: 'string', enum: ['env', 'design', 'exec', 'assert', 'report', 'custom'], description: '可选：只看某槽位的成员' },
+      },
+      additionalProperties: false,
+    },
+  },
 ]
 
 function resolveRoot(args) {
@@ -38,6 +130,16 @@ function callTool(name, args) {
     return { projectRoot: root, ...r }
   }
   if (name === 'test_gate_reset') return { projectRoot: root, ...reset(root) }
+  if (name === 'family_skills') {
+    const { members, plan } = discoverFamily(root)
+    const filtered = args?.phase ? members.filter(m => m.phase === args.phase) : members
+    return {
+      members: filtered,
+      plan: args?.phase ? plan.filter(n => filtered.some(m => m.name === n)) : plan,
+      howToUse: '把 plan 名单与顺序呈现给用户确认后，用宿主 Skill 工具逐个加载成员执行；' +
+        'env 成员先跑、产物落盘后 exec 才开跑（下游只认落盘产物）。',
+    }
+  }
   throw new Error(`unknown tool: ${name}`)
 }
 
