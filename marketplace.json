@@ -11,7 +11,7 @@
     {
       "name": "e2e-suite",
       "source": "./e2e-suite",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "description": "All-in-one self-evolving test suite: contract-based e2e skill family (orchestrator + 17 members) PLUS an automated test gate (Stop-hook enforcement with auto baseline, flaky quarantine, regression blocking; TIA for pytest/go; per-runner failure parsing for jest/vitest/mocha/node --test/pytest/cargo/go/dotnet/CMake; MCP tools status/run/reset/family_skills with real before/after topological scheduling; platform-agnostic gate-core with CLI). One install, full functionality.",
       "description_i18n": {
         "zh-CN": "一体化自进化测试套件：契约式联动测试技能家族（总控 + 17 成员），外加自动测试门禁（Stop hook 收工把关：基线全自动、抖动隔离、回归拦截、无法评估显式告警；pytest/go 影响面选择；按运行器分别解析失败名；MCP 四工具（含家族发现入口 family_skills，真 before/after 拓扑编排）；判定引擎平台无关并带 CLI）。装一次，全功能。"

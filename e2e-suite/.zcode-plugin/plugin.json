@@ -1,6 +1,6 @@
 {
   "name": "e2e-suite",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "All-in-one self-evolving test suite: contract-based e2e skill family (orchestrator + 17 members — joint front/back-end testing, negative paths, persistence boundaries, UX acceptance, visual regression, API contract diff, performance probing, whitebox suites, canary self-evolution, harness-scaffold blueprint) PLUS an automated test gate (Stop-hook enforcement with auto baseline, flaky quarantine, regression blocking; TIA for pytest/go; per-runner failure parsing for jest/vitest/mocha/node --test/pytest/cargo/go/dotnet/CMake; MCP tools status/run/reset/family_skills with real before/after topological scheduling; platform-agnostic gate-core with CLI). One install, full functionality.",
   "description_i18n": {
     "en": "All-in-one self-evolving test suite: contract-based e2e skill family (orchestrator + 17 members) plus an automated test gate (Stop-hook enforcement, auto baseline, flaky quarantine, regression blocking, per-runner failure parsing, MCP tools, platform-agnostic CLI). One install, full functionality.",
