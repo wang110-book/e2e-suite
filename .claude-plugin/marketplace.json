@@ -1,45 +1,28 @@
 {
   "name": "e2e-suite",
-  "description": "Community marketplace for the e2e-suite project: self-evolving front/back-end test skill family + platform-agnostic test gate. Add this marketplace in your client, then install either plugin.",
+  "description": "Community marketplace for the e2e-suite project: one all-in-one plugin — self-evolving front/back-end test skill family + automated test gate (hooks, MCP, CLI).",
   "description_i18n": {
-    "zh-CN": "e2e-suite 社区插件市场：自进化前后端联动测试技能家族 + 平台无关测试门禁。在客户端添加本市场后即可安装其中插件。"
+    "zh-CN": "e2e-suite 社区插件市场：一个一体化插件——自进化前后端联动测试技能家族 + 自动测试门禁（hooks、MCP、CLI）。"
   },
   "owner": {
     "name": "e2e-suite contributors"
   },
   "plugins": [
     {
-      "name": "e2e-suite-skills",
-      "source": "./e2e-suite-skills",
+      "name": "e2e-suite",
+      "source": "./e2e-suite",
       "version": "1.0.0",
-      "description": "Self-evolving e2e test skill family: a contract-based orchestrator that dynamically discovers and schedules member skills across env/design/exec/assert/report/canary slots — joint front/back-end testing, negative paths, persistence boundaries, UX acceptance, visual regression, API contract diff, performance probing, whitebox suites, canary self-evolution, and harness-scaffold (a blueprint that generates a reusable test harness for any project). Pure methodology skills, zero runtime hooks.",
+      "description": "All-in-one self-evolving test suite: contract-based e2e skill family (orchestrator + 17 members — joint front/back-end testing, negative paths, persistence boundaries, UX acceptance, visual regression, API contract diff, performance probing, whitebox suites, canary self-evolution, harness-scaffold blueprint) PLUS an automated test gate (Stop-hook enforcement with auto baseline, flaky quarantine, regression blocking; TIA for pytest/go; MCP tools status/run/reset; platform-agnostic gate-core with CLI). One install, full functionality.",
       "description_i18n": {
-        "zh-CN": "自进化前后端联动测试技能家族：契约式总控动态发现并调度 env/design/exec/assert/report/金丝雀 各槽位成员——联动测试、负向路径、持久化边界、UX 验收、视觉回归、API 契约比对、性能探针、白盒套件、金丝雀自进化，以及 harness-scaffold（为任意项目生成可复用测试脚手架的蓝图）。纯方法论技能，无运行时 hook。"
+        "zh-CN": "一体化自进化测试套件：契约式联动测试技能家族（总控 + 17 成员），外加自动测试门禁（Stop hook 收工把关：基线全自动、抖动隔离、回归拦截；MCP 三工具；判定引擎平台无关并带 CLI）。装一次，全功能。"
       },
-      "displayName": "E2E Suite Skills",
+      "displayName": "E2E Suite (Skills + Test Gate)",
       "displayName_i18n": {
-        "zh-CN": "联动测试技能家族"
+        "zh-CN": "联动测试套件（技能家族 + 测试门禁）"
       },
       "author": { "name": "e2e-suite contributors" },
       "category": "developer-tools",
-      "keywords": ["testing", "e2e", "quality", "skills", "test-orchestration"],
-      "componentTypes": ["skill"]
-    },
-    {
-      "name": "test-gate",
-      "source": "./test-gate",
-      "version": "0.2.0",
-      "description": "Automated test gate v0.2: hooks enforce Stop gating (auto baseline lifecycle + flaky quarantine with rerun detection + regression blocking), TIA affected-test selection for pytest/go, MCP exposes status/run/reset, gate-preflight joins the e2e-suite family (env slot) gating E2E runs on green unit layer. Auto-detects test stacks, zero per-project config. gate-core is platform-agnostic with a CLI entry for any host.",
-      "description_i18n": {
-        "zh-CN": "自动测试门禁 v0.2：hook 收工把关（基线全自动生命周期+抖动重跑隔离+回归拦截），pytest/go 影响面选择跑测，MCP 三工具，gate-preflight 以 env 槽接入 e2e 家族（联动开跑先过单元闸）。自动检测测试栈，新项目零配置。判定引擎平台无关，带任意宿主可用的 CLI。"
-      },
-      "displayName": "Test Gate",
-      "displayName_i18n": {
-        "zh-CN": "测试门禁"
-      },
-      "author": { "name": "e2e-suite contributors" },
-      "category": "developer-tools",
-      "keywords": ["testing", "tdd", "hooks", "quality-gate", "mcp"],
+      "keywords": ["testing", "e2e", "tdd", "quality-gate", "hooks", "mcp", "skills"],
       "componentTypes": ["skill", "hook", "mcp"]
     }
   ]

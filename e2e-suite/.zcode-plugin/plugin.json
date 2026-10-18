@@ -1,0 +1,26 @@
+{
+  "name": "e2e-suite",
+  "version": "1.0.0",
+  "description": "All-in-one self-evolving test suite: contract-based e2e skill family (orchestrator + 17 members — joint front/back-end testing, negative paths, persistence boundaries, UX acceptance, visual regression, API contract diff, performance probing, whitebox suites, canary self-evolution, harness-scaffold blueprint) PLUS an automated test gate (Stop-hook enforcement with auto baseline, flaky quarantine, regression blocking; TIA for pytest/go; MCP tools status/run/reset; platform-agnostic gate-core with CLI). One install, full functionality.",
+  "description_i18n": {
+    "en": "All-in-one self-evolving test suite: contract-based e2e skill family (orchestrator + 17 members) plus an automated test gate (Stop-hook enforcement, auto baseline, flaky quarantine, regression blocking, MCP tools, platform-agnostic CLI). One install, full functionality.",
+    "zh-CN": "一体化自进化测试套件：契约式联动测试技能家族（总控 + 17 成员——前后端联动、负向路径、持久化边界、UX 验收、视觉回归、API 契约比对、性能探针、白盒套件、金丝雀自进化、测试脚手架蓝图），外加自动测试门禁（Stop hook 收工把关：基线全自动、抖动隔离、回归拦截；pytest/go 影响面选择；MCP 三工具；判定引擎平台无关并带 CLI）。装一次，全功能。"
+  },
+  "author": {
+    "name": "e2e-suite contributors"
+  },
+  "license": "MIT",
+  "keywords": [
+    "testing",
+    "e2e",
+    "tdd",
+    "quality-gate",
+    "hooks",
+    "mcp",
+    "skills",
+    "test-orchestration"
+  ],
+  "skills": "./skills",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}
