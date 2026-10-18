@@ -1,11 +1,21 @@
 #!/usr/bin/env node
 /**
  * gate-core — 测试门禁共享内核。
- * 被两个薄壳复用：hooks/gate-hook.mjs（事件驱动拦截）与 mcp/server.mjs（可查询能力面）。
- * 语义与 ~/.zcode/hooks/test-gate.mjs 全局版完全一致（5 场景生命周期实测过的逻辑，原样迁移）：
+ * 被三个薄壳复用：hooks/gate-hook.mjs（事件驱动拦截）、mcp/server.mjs（可查询能力面）、
+ * lib/gate-cli.mjs（跨宿主/CI 命令行）。
+ *
+ * 判定语义：
  *   PostToolUse(Edit|Write 碰 src/tests/manifest) 记脏 → Stop 跑栈；
  *   首红立基线放行 → 只拦新增失败名 → 全绿清基线+立绿史 → 绿史后红=回归直接打回。
- * 状态目录 %TEMP%\zcode-test-gate\<项目路径哈希> 不变，与全局版共享同一份基线。
+ *
+ * 三种决策：
+ *   pass         — 绿 / 基线内 / 抖动放行 / 未改动；
+ *   block        — 新增失败、回归、构建失败（打回）；
+ *   unevaluated  — 门禁无法评估（测试器缺失、超时、输出溢出、输出不可解析）。
+ *                  hook 对 unevaluated 放行会话（门禁坏了不卡人），但必须显式告警，
+ *                  绝不再伪装成 pass——否则"超时/溢出"会被当成"全绿"。
+ *
+ * 状态目录 %TEMP%\zcode-test-gate\<项目路径哈希>，与全局版共享同一份基线。
  * 注意：本模块禁止顶层读取 stdin / 计算 cwd——stdin 归各薄壳自己管（MCP 用它传 JSON-RPC）。
  */
 import fs from 'node:fs'
@@ -19,7 +29,7 @@ const ANCHORS = ['package.json', 'pyproject.toml', 'setup.py', 'requirements.txt
 
 export function findRoot(start) {
   let dir = path.resolve(start)
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 12; i++) {
     try {
       const entries = fs.readdirSync(dir)
       if (entries.some(e => ANCHORS.includes(e) || e.endsWith('.sln'))) return dir
@@ -68,12 +78,87 @@ export function isCodePath(rel) {
 
 export function markEdit(projectRoot, filePath) {
   const st = stateFor(projectRoot)
-  const rel = path.relative(projectRoot, path.resolve(projectRoot, filePath)).replace(/\\/g, '/')
-  if (!rel.startsWith('..') && isCodePath(rel)) {
+  const abs = path.resolve(projectRoot, filePath)
+  const rel = path.relative(projectRoot, abs).replace(/\\/g, '/')
+  // 跨盘符时 path.relative 返回绝对路径（不以 .. 开头），必须显式排除，否则项目外改动也会触发跑测
+  if (!path.isAbsolute(rel) && !rel.startsWith('..') && isCodePath(rel)) {
     fs.mkdirSync(st.stateDir, { recursive: true })
     fs.appendFileSync(st.markerPath, rel + '\n')
   }
   return { marked: true }
+}
+
+// ── 失败名解析（各运行器输出格式不同，不能共用 jest 的符号行）───────────────
+// 统一产出 { name, file? }；name 只取用例标识，剔除耗时/尾注，保证重跑可比较。
+const stripAnsi = (s) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, '')
+const cleanName = (s) => s.replace(/\s*\(\d+(?:\.\d+)?\s*(?:ms|s|m|h)\)\s*$/i, '').trim()
+
+function parseJest(out) {
+  const names = [...out.matchAll(/^\s*(?:✕|×|✗|✖)\s+(.+)$/gm)].map(m => cleanName(m[1]))
+  return names.filter(n => n && !/^failing tests?:?$/i.test(n)).map(n => ({ name: n }))
+}
+function parsePytest(out) {
+  const seen = new Set()
+  const rows = []
+  for (const m of out.matchAll(/^FAILED\s+(\S+)(?:\s+-\s+(.*))?$/gm)) {
+    const file = m[1]
+    const name = m[2] ? `${file} - ${m[2]}` : file
+    if (!seen.has(name)) { seen.add(name); rows.push({ name, file }) }
+  }
+  return rows
+}
+function parseCargo(out) {
+  return [...out.matchAll(/^\s*test\s+(\S+)\s+\.\.\.\s+FAILED/gm)].map(m => ({ name: m[1] }))
+}
+function parseGo(out) {
+  return [...out.matchAll(/--- FAIL:\s+(\S+)/g)].map(m => ({ name: m[1] }))
+}
+function parseDotnet(out) {
+  return [...out.matchAll(/^\s*Failed\s+(\S+)/gim)].map(m => ({ name: m[1] }))
+}
+function parseUnitTests(out) {
+  return [...out.matchAll(/^\[FAIL\]\s+(\S+)/gm)].map(m => ({ name: m[1] }))
+}
+// node --test（spec reporter）：`✖ alpha fails (1.82ms)` + 汇总 `failing tests:` 伪行
+function parseNodeTest(out) {
+  const names = [...out.matchAll(/^\s*[✖✗✕×]\s+(.+?)\s*$/gm)].map(m => cleanName(m[1]))
+  return names.filter(n => n && !/^(failing tests?:?|test[s]? failed|failing)$/i.test(n)).map(n => ({ name: n }))
+}
+// vitest：`FAIL  src/a.test.ts > suite > case`；`× case` 行在部分 reporter 出现
+function parseVitest(out) {
+  const rows = []
+  const seen = new Set()
+  for (const m of out.matchAll(/^\s*FAIL\s+(\S+)\s+>\s+(.+)$/gm)) {
+    const name = `${m[1]} > ${m[2].trim()}`
+    if (!seen.has(name)) { seen.add(name); rows.push({ name, file: m[1] }) }
+  }
+  if (rows.length) return rows
+  return [...out.matchAll(/^\s*(?:×|✕)\s+(.+)$/gm)].map(m => ({ name: cleanName(m[1]) }))
+}
+// mocha：`  1) suite` + `  case:`；以及 `failing` 段的编号块。取最常见的缩进失败行
+function parseMocha(out) {
+  const rows = []
+  const seen = new Set()
+  for (const m of out.matchAll(/^\s{2,}\d+\)\s+(.+)$/gm)) {
+    const name = cleanName(m[1])
+    if (name && !seen.has(name)) { seen.add(name); rows.push({ name }) }
+  }
+  return rows
+}
+// 通用兜底：FAIL/FAILED/✕ 前缀行，仍解析不出就返回空（由签名比对兜底）
+function parseGeneric(out) {
+  const rows = []
+  const seen = new Set()
+  for (const m of out.matchAll(/^\s*(?:FAIL(?:ED)?|✕|✖|×)\s+(\S.*)$/gm)) {
+    const name = cleanName(m[1])
+    if (name && !seen.has(name)) { seen.add(name); rows.push({ name }) }
+  }
+  return rows
+}
+
+function testCount(out) {
+  const m = out.match(/(\d+)\s+failed/i)
+  return m ? +m[1] : null
 }
 
 export function detect(projectRoot) {
@@ -86,9 +171,24 @@ export function detect(projectRoot) {
     let pkg = {}
     try { pkg = JSON.parse(read('package.json')) } catch {}
     const pm = has('pnpm-lock.yaml') ? 'pnpm' : has('yarn.lock') ? 'yarn' : has('bun.lockb') ? 'bun' : 'npm'
-    if (pkg.scripts && pkg.scripts.test && !/no tests? configured|no test specified|placeholder/i.test(pkg.scripts.test)) {
-      return { runner: 'jest', test: { cmd: pm, args: pm === 'npm' ? ['test', '--silent'] : ['run', 'test'] },
-        parse: (o) => [...o.matchAll(/^\s*(?:✕|×|✗|✖)\s+(.+)$/gm)].map(m => m[1].trim()) }
+    const script = pkg.scripts && typeof pkg.scripts.test === 'string' ? pkg.scripts.test : ''
+    if (script && !/no tests? configured|no test specified|placeholder/i.test(script)) {
+      // 按 test 脚本实际使用的运行器选解析器（原先一律套 jest，导致 node --test/vitest/mocha 全部失效）
+      let runner = 'generic'
+      if (/\bnode\s+--test\b|\bnode\s+-t\b/.test(script)) runner = 'node-test'
+      else if (/\bjest\b/.test(script)) runner = 'jest'
+      else if (/\bvitest\b/.test(script)) runner = 'vitest'
+      else if (/\bmocha\b/.test(script)) runner = 'mocha'
+      else if (has('jest.config.js') || has('jest.config.ts') || has('jest.config.cjs') || pkg.jest) runner = 'jest'
+      else if (has('vitest.config.js') || has('vitest.config.ts') || has('vitest.config.mjs')) runner = 'vitest'
+      else if (has('.mocharc.json') || has('.mocharc.js') || has('.mocharc.yml')) runner = 'mocha'
+      const parser = { 'node-test': parseNodeTest, jest: parseJest, vitest: parseVitest, mocha: parseMocha, generic: parseGeneric }[runner]
+      return {
+        runner,
+        test: { cmd: pm, args: pm === 'npm' ? ['test', '--silent'] : ['run', 'test'] },
+        parse: (o) => parser(stripAnsi(o)),
+        failCount: testCount,
+      }
     }
   }
   if (/(^\s*pytest|python_requires.*pytest|\bpytest\b)/m.test(read('pyproject.toml')) || /\bpytest\b/.test(read('requirements.txt'))
@@ -98,18 +198,18 @@ export function detect(projectRoot) {
     if (hasTests) {
       return { runner: 'pytest', test: { cmd: 'python', args: ['-m', 'pytest', '-q', '--no-header', '-rf'] },
         select: selectPytest(projectRoot),
-        parse: (o) => [...o.matchAll(/^FAILED\s+(\S+)/gm)].map(m => m[1]),
-        failCount: (o) => { const m = o.match(/(\d+) failed/); return m ? +m[1] : null } }
+        parse: (o) => parsePytest(stripAnsi(o)),
+        failCount: testCount }
     }
   }
   if (has('Cargo.toml')) return { runner: 'cargo', test: { cmd: 'cargo', args: ['test'] },
-    parse: (o) => [...o.matchAll(/^\s*test\s+(\S+)\s+\.\.\.\s+FAILED/gm)].map(m => m[1]) }
+    parse: (o) => parseCargo(stripAnsi(o)), failCount: testCount }
   if (has('go.mod')) return { runner: 'gotest', test: { cmd: 'go', args: ['test', './...'] },
     select: selectGo(projectRoot),
-    parse: (o) => [...o.matchAll(/--- FAIL:\s+(\S+)/g)].map(m => m[1]) }
+    parse: (o) => parseGo(stripAnsi(o)), failCount: testCount }
   const sln = lsSafe(projectRoot).find(f => f.endsWith('.sln'))
   if (sln) return { runner: 'dotnet', test: { cmd: 'dotnet', args: ['test', sln, '--nologo', '-v', 'q'] },
-    parse: (o) => [...o.matchAll(/Failed\s+(\S+)/gi)].map(m => m[1]) }
+    parse: (o) => parseDotnet(stripAnsi(o)), failCount: testCount }
   if (has('CMakeLists.txt') && has('build') && /add_executable\(\s*unit_tests/.test(read('CMakeLists.txt'))) {
     let cmakeBin = 'cmake'
     try {
@@ -122,11 +222,12 @@ export function detect(projectRoot) {
       return { runner: 'unit_tests_ex',
         build: [{ cmd: cmakeBin, args: ['--build', 'build', '--target', 'unit_tests', '--config', 'Release'], timeout: 360_000 }],
         test: { cmd: exeCandidates[0], args: [], timeout: 240_000 },
-        parse: (o) => [...o.matchAll(/^\[FAIL\]\s+(\S+)/gm)].map(m => m[1]) }
+        parse: (o) => parseUnitTests(stripAnsi(o)), failCount: testCount }
     }
   }
   const mk = read('Makefile') || read('makefile')
-  if (/^test\s*:/m.test(mk)) return { runner: 'make', test: { cmd: 'make', args: ['test'] }, parse: () => [] }
+  if (/^test\s*:/m.test(mk)) return { runner: 'make', test: { cmd: 'make', args: ['test'] },
+    parse: (o) => parseGeneric(stripAnsi(o)), failCount: testCount }
   return null
 }
 
@@ -167,10 +268,19 @@ function selectGo(projectRoot) {
 
 const sig = (s) => crypto.createHash('sha1').update(s).digest('hex')
 
+// ── 基线 ────────────────────────────────────────────────────────────────
+// 字段：failing（归一化失败名）、count、partial（是否由 TIA 子集跑测建立）、scope（子集目标）、
+//       failedCount（测试器报告的失败数，用于识别"解析不全"）、signature（输出签名）。
 function loadBaseline(st) { try { return JSON.parse(fs.readFileSync(st.baselinePath, 'utf8')) } catch { return null } }
-function saveBaseline(st, projectRoot, names, signature) {
+function saveBaseline(st, projectRoot, extra) {
   fs.mkdirSync(st.stateDir, { recursive: true })
-  fs.writeFileSync(st.baselinePath, JSON.stringify({ at: new Date().toISOString(), project: projectRoot, failing: names, count: names.length, signature: signature || null }, null, 2))
+  fs.writeFileSync(st.baselinePath, JSON.stringify({
+    at: new Date().toISOString(), project: projectRoot,
+    failing: extra.failing || [], count: (extra.failing || []).length,
+    partial: !!extra.partial, scope: extra.scope || null,
+    buildOnly: !!extra.buildOnly,
+    failedCount: extra.failedCount ?? null, signature: extra.signature || null,
+  }, null, 2))
 }
 
 // ── 抖动隔离（QAPractices 口径的 hook 场景简化版）──────────────
@@ -188,20 +298,39 @@ function quarantinedNames(q) { return Object.keys(q).filter(k => q[k].quarantine
 
 export function runStep(projectRoot, s) {
   const isCmdShell = process.platform === 'win32' && /^(npm|pnpm|yarn|bun|npx)$/.test(s.cmd)
+  const opts = {
+    cwd: projectRoot, timeout: s.timeout || 300_000, encoding: 'utf8', windowsHide: true,
+    // 测试输出可能很大（失败堆栈/verbose reporter）；默认 1MB 会 ENOBUFS，被误判成"工具缺失"
+    maxBuffer: 64 * 1024 * 1024,
+  }
   if (isCmdShell) {
     const args = (s.args || []).map(a => /\s/.test(a) ? JSON.stringify(a) : a)
-    return spawnSync([s.cmd, ...args].join(' '), { cwd: projectRoot, timeout: s.timeout || 300_000, encoding: 'utf8', shell: true, windowsHide: true })
+    return spawnSync([s.cmd, ...args].join(' '), { ...opts, shell: true })
   }
-  return spawnSync(s.cmd, s.args || [], { cwd: projectRoot, timeout: s.timeout || 300_000, encoding: 'utf8', windowsHide: true })
+  return spawnSync(s.cmd, s.args || [], opts)
 }
 
-/** 完整门禁判定。返回 {decision:'pass'|'block', reason, runner, failing?, fresh?, messages[], tail?}
- *  副作用（状态转移）与全局版一致：立基线/清基线/绿史/清脏标记。 */
+// spawnSync 的 error 覆盖 ENOENT/ETIMEDOUT/ENOBUFS/EACCES——只有 ENOENT 才是"工具没装"
+function spawnFailure(r) {
+  if (!r.error) return null
+  const code = r.error.code || ''
+  if (code === 'ENOENT') return { kind: 'tool-missing', message: `命令不存在（${code}）` }
+  if (code === 'ETIMEDOUT') return { kind: 'timeout', message: '执行超时' }
+  if (code === 'ENOBUFS') return { kind: 'output-overflow', message: '输出超出缓冲上限' }
+  return { kind: 'spawn-error', message: `${code || 'unknown'}: ${r.error.message || r.error}` }
+}
+
+/** 完整门禁判定。返回 { decision:'pass'|'block'|'unevaluated', reason, runner, failing?, fresh?, messages[], tail? }
+ *  副作用（状态转移）：立基线/清基线/绿史/清脏标记。
+ *  @param {{force?:boolean, skipDirtyCheck?:boolean}} opts  force=忽略脏标记直接跑；
+ *         skipDirtyCheck=true 时即使有脏标记也当作"没改过"跳过（供外部显式调度）。 */
 export function runGate(projectRoot, { skipDirtyCheck = false, force = false } = {}) {
   const st = stateFor(projectRoot)
   const R = (decision, reason, extra = {}) => ({ decision, reason, ...extra })
   const clearMarker = () => { try { fs.unlinkSync(st.markerPath) } catch {} }
+  const keepMarker = () => { /* unevaluated：保留脏标记，下回合继续尝试把关 */ }
 
+  if (skipDirtyCheck) return R('pass', 'skip-dirty-check')
   if (!force && !fs.existsSync(st.markerPath)) return R('pass', 'clean-turn')
   const plan = detect(projectRoot)
   if (!plan) { clearMarker(); return R('pass', 'no-test-stack') }
@@ -209,13 +338,33 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
 
   for (const b of plan.build || []) {
     const r = runStep(projectRoot, b)
-    if (r.error) { log(st, `构建器不可用(${b.cmd}): ${r.error.message} — 放行`); return R('pass', 'build-tool-missing', { runner: plan.runner }) }
+    const fail = spawnFailure(r)
+    if (fail) {
+      log(st, `构建器不可用(${b.cmd}): ${fail.message} — unevaluated`)
+      return R('unevaluated', 'build-tool-missing', { runner: plan.runner,
+        messages: [`构建器不可用（${fail.message}），本次无法评估测试状态`] })
+    }
     if (r.status !== 0) {
-      if (!loadBaseline(st)) { log(st, '基线未建立即构建失败 — 首放并记录'); return R('pass', 'first-build-fail', { runner: plan.runner }) }
+      const base0 = loadBaseline(st)
+      const tail = ((r.stderr || '') + (r.stdout || '')).slice(-3000)
+      // 首红登记、之后打回——与测试基线同一生命周期。原实现"首放"但从不登记，
+      // 导致构建永远失败的项目每回合都命中"首次"分支、永久放行。
+      if (!base0) {
+        saveBaseline(st, projectRoot, { failing: [], buildOnly: true, signature: sig(String(r.status)) })
+        clearMarker()
+        log(st, '构建失败（首红）— 登记构建基线并放行一次，后续构建失败将打回')
+        return R('pass', 'build-failed-first', { runner: plan.runner,
+          messages: ['构建失败（首次）已登记为已知状态；再次构建失败将打回，修复后基线自动清除'],
+          tail })
+      }
       log(st, '构建失败 — 打回')
       clearMarker()
-      return R('block', 'build-failed', { runner: plan.runner, tail: ((r.stderr || '') + (r.stdout || '')).slice(-3000) })
+      return R('block', 'build-failed', { runner: plan.runner, tail })
     }
+  }
+  // 构建成功：构建基线作废（否则测试红会被当成"新增"而无法建立测试基线）
+  if (loadBaseline(st)?.buildOnly) {
+    try { fs.unlinkSync(st.baselinePath) } catch {}
   }
 
   // 读取本回合脏文件（供 TIA 选择性跑测 + 改动面分类）
@@ -225,21 +374,40 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
 
   // TIA：pytest/go 能把脏文件映射到测试目标；映射不全 → 安全侧全量（只多跑不漏跑）
   let testStep = plan.test
+  let selection = null
   const selected = plan.select ? plan.select(projectRoot, dirtyFiles) : null
   if (selected && selected.args) {
     testStep = { ...plan.test, args: selected.args }
+    selection = selected
     log(st, `TIA 选择跑测：${selected.note}`)
   }
 
   const t = runStep(projectRoot, testStep)
-  if (t.error) { log(st, `测试命令不可用(${plan.test.cmd}): ${t.error.message} — 放行`); return R('pass', 'test-tool-missing', { runner: plan.runner }) }
-  let out = (t.stdout || '') + (t.stderr || '')
-  let names = plan.parse ? plan.parse(out) : []
+  const tFail = spawnFailure(t)
+  if (tFail) {
+    log(st, `测试命令不可用(${plan.test.cmd}): ${tFail.message} — unevaluated`)
+    return R('unevaluated', 'test-tool-missing', { runner: plan.runner,
+      messages: [`测试命令不可用（${tFail.message}），本次无法评估测试状态`] })
+  }
+  const out = (t.stdout || '') + (t.stderr || '')
+  const parsed = plan.parse ? plan.parse(out) : []
+  const names = parsed.map(x => x.name)
+  const failedCount = plan.failCount ? plan.failCount(out) : null
+  // 解析不全（有失败数但名字数对不上）→ 不能拿不完整的名字集做基线比对
+  const parseIncomplete = failedCount !== null && failedCount > names.length
   const q = loadQuarantine(st)
 
-  // 全绿：清脏/清基线/立绿史 + 隔离区绿连续计数回炉
+  // 全绿
   if (t.status === 0) {
     clearMarker()
+    // TIA 子集绿 ≠ 全量绿：未跑的用例状态未知，基线一律不动、也不写绿史。
+    // （子集覆盖范围无法从失败名单反推——基线项可能恰好落在未跑的用例里。）
+    if (selection) {
+      const kept = (loadBaseline(st)?.failing || []).length
+      log(st, `TIA 子集全绿（${selection.note}）— 基线保留 ${kept} 项，不写绿史`)
+      return R('pass', 'subset-green', { runner: plan.runner,
+        messages: [`子集跑测全绿（${selection.note}）；基线保留 ${kept} 项，未建立绿史（全量绿才收紧门禁）`] })
+    }
     const had = fs.existsSync(st.baselinePath)
     if (had) { try { fs.unlinkSync(st.baselinePath) } catch {} }
     fs.mkdirSync(st.stateDir, { recursive: true })
@@ -258,7 +426,35 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
       messages: [had ? '全绿，基线已自动清除，门禁收紧为一红即拦' : '全绿', ...reintegrated.map(n => `抖动测试 ${n} 连续 ${REINTEGRATE_GREEN_STREAK} 绿，已回炉主集`)] })
   }
 
-  const outSig = sig(out)
+  // 红但名字解析不全：签名兜底；仍无法确认 → unevaluated（不伪装成绿）
+  if (!names.length || parseIncomplete) {
+    const outSig = sig(out.replace(/\s+/g, ' ').trim())
+    const base0 = loadBaseline(st)
+    if (base0 && base0.signature === outSig) {
+      clearMarker()
+      log(st, '同一红盘签名 — 基线内放行')
+      return R('pass', 'same-red-signature', { runner: plan.runner })
+    }
+    if (!base0 && fs.existsSync(st.everGreenPath)) {
+      log(st, '有绿史且现红但无法解析用例名 — 回归，打回')
+      return R('block', 'regression-after-green', { runner: plan.runner, failing: [],
+        messages: ['本仓库曾全绿，现失败且无法解析用例名（回归）。TEST_GATE_RESET=1 或 reset 工具可重新宽容'],
+        tail: out.slice(-3000) })
+    }
+    if (!base0) {
+      saveBaseline(st, projectRoot, { failing: [], signature: outSig, failedCount, parseIncomplete })
+      clearMarker()
+      log(st, `基线登记（无可用失败名，记录输出签名；failedCount=${failedCount}）— 首放`)
+      return R('pass', 'baseline-created-unparsed', { runner: plan.runner,
+        messages: [`测试红但无法解析用例名（报告 ${failedCount ?? '?'} 个失败），已按输出签名登记基线；修复前输出变化即打回`] })
+    }
+    log(st, '红且无法解析用例名、签名变化 — unevaluated（保守不放行也不伪装绿）')
+    return R('unevaluated', 'unparsable-changed', { runner: plan.runner,
+      messages: ['测试红且无法解析用例名，输出与基线不一致，无法判定新增/既有失败'],
+      tail: out.slice(-3000) })
+  }
+
+  const outSig = sig(out.replace(/\s+/g, ' ').trim())
   const base = loadBaseline(st)
   if (!base) {
     if (fs.existsSync(st.everGreenPath)) {
@@ -267,11 +463,11 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
         messages: ['本仓库曾全绿，现失败（回归）。TEST_GATE_RESET=1 或 reset 工具可重新宽容'],
         tail: out.slice(-3000) })
     }
-    saveBaseline(st, projectRoot, names, outSig)
+    saveBaseline(st, projectRoot, { failing: names, signature: outSig, failedCount, partial: !!selection, scope: selection?.note })
     clearMarker()
-    log(st, `基线登记：${names.length} 个已知失败 — 首放`)
+    log(st, `基线登记：${names.length} 个已知失败 — 首放${selection ? `（子集：${selection.note}）` : ''}`)
     return R('pass', 'baseline-created', { runner: plan.runner, failing: names,
-      messages: [`已建立基线：${names.length} 个既有失败记为已知，只拦新增`] })
+      messages: [`已建立基线：${names.length} 个既有失败记为已知，只拦新增${selection ? `（注意：本次为子集跑测，基线仅覆盖 ${selection.note}）` : ''}`] })
   }
 
   const known = new Set(base.failing || [])
@@ -282,13 +478,13 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
   if (fresh.length) {
     log(st, `新增失败 ${fresh.length} 个 — 重跑一次甄别抖动`)
     const t2 = runStep(projectRoot, testStep)
-    if (t2.error) {
-      log(st, `重跑无法执行(${t2.error.message}) — 无法甄别，保守打回`)
+    const t2Fail = spawnFailure(t2)
+    if (t2Fail) {
+      log(st, `重跑无法执行(${t2Fail.message}) — 无法甄别，保守打回`)
       return R('block', 'rerun-tool-error', { runner: plan.runner, fresh,
         messages: ['新增失败且重跑无法执行，无法甄别抖动，保守打回'], tail: out.slice(-3000) })
     }
-    // 重跑翻绿的判定看"名字消失"而非整体退出码（基线内可能仍有恒红项）
-    const still = plan.parse ? plan.parse((t2.stdout || '') + (t2.stderr || '')) : []
+    const still = plan.parse ? plan.parse((t2.stdout || '') + (t2.stderr || '')).map(x => x.name) : []
     const stillSet = new Set(still)
     const recovered = fresh.filter(n => !stillSet.has(n))   // 重跑中不再失败 = 抖动
     const realFresh = fresh.filter(n => stillSet.has(n))    // 重跑仍红且仍属新增 = 真回归
@@ -311,16 +507,12 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
       return R('pass', 'flaky-rerun-clear', { runner: plan.runner, flaky: recovered, quarantined: nowQ,
         messages: [`重跑翻绿 ${recovered.length} 个，判为抖动放行`, ...nowQ.map(n => `${n} 抖动累计 ${q[n].flakyHits} 次，已隔离登记（连续 ${REINTEGRATE_GREEN_STREAK} 绿自动回炉）`)] })
     }
-    out = (t2.stdout || '') + (t2.stderr || ''); names = still
   }
 
-  if (!names.length && base.signature !== outSig) {
-    log(st, '红且无法解析用例名、签名变化 — 保守打回')
-    return R('block', 'unparsable-changed', { runner: plan.runner, messages: ['测试红，无法解析用例名且输出变化，保守打回'], tail: out.slice(-3000) })
-  }
   clearMarker()
   if (!names.length) {
-    saveBaseline(st, projectRoot, names, outSig); log(st, '同一红盘签名 — 基线内放行')
+    saveBaseline(st, projectRoot, { ...base, signature: outSig, failedCount })
+    log(st, '同一红盘签名 — 基线内放行')
     return R('pass', 'same-red-signature', { runner: plan.runner })
   }
   log(st, `失败 ${names.length} 个均在基线/隔离内 — 放行`)
@@ -343,7 +535,10 @@ export function status(projectRoot) {
   const backendHit = dirty.some(f => /^(src|lib|pkg|cmd|server|api|backend)\//i.test(f))
   const frontendHit = dirty.some(f => /^(webui|ui|front|frontend|client|www|static|public)\//i.test(f) || /\.(html|css|vue|jsx|tsx)$/i.test(f))
   return { projectRoot, stateDir: st.stateDir, detectedRunner: plan ? plan.runner : null,
-    dirty, baseline: baseline ? { at: baseline.at, count: baseline.count, failing: baseline.failing } : null,
+    dirty, baseline: baseline ? {
+      at: baseline.at, count: baseline.count, failing: baseline.failing,
+      partial: !!baseline.partial, scope: baseline.scope || null,
+    } : null,
     everGreen, logTail,
     quarantine: Object.keys(q).length ? q : null,
     changeSurface: dirty.length ? { backend: backendHit, frontend: frontendHit, jointE2eSuggested: backendHit && frontendHit } : null }

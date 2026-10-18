@@ -7,6 +7,12 @@ description: 测试门禁（test-gate）使用与恢复指南。当被 [test-gat
 
 本插件的 hook 会在收工（Stop）时自动把关：碰过 `src/`、`tests/` 或构建清单的回合，必须测试全绿或失败全在基线内才能结束。基线生命周期全自动，**任何情况下都不要靠改测试/删断言来变绿**（AGENTS.md 冻结条款）。
 
+## 三种判定结果
+
+- `pass` — 全绿 / 失败都在基线或隔离区内 / 抖动放行 / 本回合没改代码。
+- `block` — 新增失败、回归、构建失败（hook 以 exit 2 打回）。
+- `unevaluated` — **门禁无法评估**：测试器没装、执行超时、输出超出缓冲、输出无法解析。此时 hook 放行会话但会打印 `⚠ 本次门禁无法评估`，**不要把它当成绿灯**——需要手动确认测试状态。
+
 ## 被 [test-gate] 打回后怎么办
 
 1. 读打回信息里的失败清单：
@@ -18,7 +24,8 @@ description: 测试门禁（test-gate）使用与恢复指南。当被 [test-gat
 ## 抖动隔离与影响面选择（v0.2 新增，自动，无需配置）
 
 - **抖动隔离**：基线外新增失败时自动重跑一次甄别（确定性复现检验）；翻绿记 flaky、反复翻绿进隔离区。真回归（重跑仍红）照常打回。
-- **TIA 影响面选择**：pytest/go 项目会按本回合脏文件映射只跑受影响的测试/包（省 SMR 磁盘 I/O）；映射不可靠时自动退回全量——**安全侧只多跑、不漏跑**。jest/C++ 聚合 exe 暂为全量。
+- **TIA 影响面选择**：pytest/go 项目会按本回合脏文件映射只跑受影响的测试/包（省 SMR 磁盘 I/O）；映射不可靠时自动退回全量——**安全侧只多跑、不漏跑**。子集跑测全绿时**不清基线、不立绿史**（未跑的用例状态未知）；jest/vitest/mocha/node --test/C++ 聚合 exe 暂为全量。
+- **按运行器解析失败名**：jest、vitest、mocha、`node --test`、pytest、cargo、go、dotnet、CMake `unit_tests` 各用各的解析器；解析不出的名字剔除耗时后缀后再比较，避免"每次重跑名字都不同 → 永远判抖动"。
 - 隔离区在 `test_gate_reset` 时一并清除。
 
 ## MCP 工具（主动查询/触发，不等 Stop）
@@ -38,4 +45,4 @@ description: 测试门禁（test-gate）使用与恢复指南。当被 [test-gat
 
 ## 栈检测范围（自动，零配置）
 
-npm/pnpm/yarn/bun（package.json test 脚本）、pytest（+TIA）、cargo、go（+TIA）、dotnet(.sln)、CMake+VS（unit_tests 目标，cmake 路径自动从 CMakeCache 解析）、make（test 目标）。检测不到或测试器缺失 → 放行并记日志（门禁坏了绝不卡会话）。
+npm/pnpm/yarn/bun（package.json test 脚本，按脚本内容识别 jest/vitest/mocha/node --test）、pytest（+TIA）、cargo、go（+TIA）、dotnet(.sln)、CMake+VS（unit_tests 目标，cmake 路径自动从 CMakeCache 解析）、make（test 目标）。检测不到测试栈 → 放行（本回合无栈可跑）；测试器缺失/超时/输出溢出 → `unevaluated` 并告警（门禁坏了绝不卡会话，但也绝不谎报绿）。

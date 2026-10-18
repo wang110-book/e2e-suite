@@ -43,9 +43,9 @@
 同 phase 多成员：默认按声明顺序串行执行；用户可点名只跑其中若干。
 
 > **`env` 槽位现状（2026-10-18 更新）**：
-> - **`gate-preflight`**（test-gate 插件内，`test-gate:gate-preflight` 命名空间）——联动开跑前的
->   门禁体检；runner=null 时建议接入 harness-scaffold 造栈。权威副本在插件目录，
->   全局 `~/.zcode/skills/` 下的同名拷贝已删（2026-10-18 定归属，防漂移）。
+> - **`gate-preflight`**（本插件内，随 e2e-suite 一并安装；MCP 工具名前缀为
+>   `mcp__plugin_e2e-suite_test-gate__*`）——联动开跑前的门禁体检；runner=null 时
+>   建议接入 harness-scaffold 造栈。权威副本在插件 `skills/` 目录。
 > - **`harness-scaffold`**（全局技能）——项目无测试基础设施时按蓝图生成共享能力库+分层入口+
 >   纪律文档；参考实现见其 SKILL.md 末节。
 > - **`tool-config-guide`**（本机通用工具/服务配置：版本确认、配置开关、观测预置、
@@ -69,6 +69,14 @@
 1. 扫描技能目录下所有 `*/SKILL.md`，grep 标记 `家族契约（e2e-suite）`（**总控自身除外**）；
 2. 解析各成员的 phase/before/after/inputs/outputs；
 3. 生成执行计划（含发现到的成员名单、顺序、产物链）**先呈现给用户确认**，再逐个通过 Skill 工具加载执行。
+
+### before/after 的解析规则（v1.2.0 起由 `lib/family.mjs` 统一实现）
+
+- 值可以是 **phase 名**（`env`/`design`/`exec`/`assert`/`report`）或**成员名**，逗号分隔多个；
+- 括号内的说明会被剥离，`after: assert（默认最后执行）` 按 `assert` 处理；
+- 相位序 `env→design→exec→assert→report` 只是默认，`before`/`after` 在其之上做稳定拓扑修正；`custom` 默认排在 `report` 之后，靠约束插入；
+- 约束成环时**不会死循环**：回退到相位序并在结果的 `conflicts` 里报告，交人工裁决；
+- `phase` 只接受上述六个值，写成别的（如 `setup`）该成员不会入列——这是刻意的，防止拼写错误静默改变编排。
 
 ## 五、接入新成员的三步
 

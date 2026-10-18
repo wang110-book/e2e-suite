@@ -19,22 +19,23 @@ description: 前后端联动测试开跑前的单元测试门禁体检（e2e-sui
 
 ## 流程
 
-1. **体检**：调用 test-gate 插件 MCP 工具 `test_gate_run`（强制完整判定一次：构建+跑测+基线/抖动逻辑）。工具在会话中按插件命名空间暴露（形如 `mcp__plugin:test-gate:test-gate__test_gate_run`，以 Settings → MCP 实际注册名为准）；不可用时退回读 `%TEMP%\zcode-test-gate\<项目哈希>\` 下 baseline/quarantine/gate.log。
+1. **体检**：调用本插件的 MCP 工具 `test_gate_run`（强制完整判定一次：构建+跑测+基线/抖动逻辑）。工具在会话中按插件命名空间暴露（形如 `mcp__plugin_e2e-suite_test-gate__test_gate_run`，以 Settings → MCP 实际注册名为准）；不可用时退回读 `%TEMP%\zcode-test-gate\<项目哈希>\` 下 baseline/quarantine/gate.log。
 2. **判定分支**：
    - `decision=pass`（全绿 / 基线内 / 抖动放行）→ 结论"**门禁绿，可开联动**"。
    - `decision=block`（新增失败/回归/构建失败）→ 结论"**先修 unit 层**"，把 failing/fresh 清单原样写入产物，**不建议跳过**（AGENTS.md 冻结条款：禁止改测试换绿）。
+   - `decision=unevaluated`（测试器缺失/超时/输出溢出/输出不可解析）→ 结论"**门禁无法评估**"，原样记录 reason 与 tail。**不得写成"绿"**：这表示本次没拿到可信的 unit 结论，是否开联动由用户决定，产物中必须显式标注。
    - 隔离区非空 → 如实登记抖动测试名单与 flakyHits，提醒 exec 层若再遇同名失败先查 quarantine 不查应用。
    - `changeSurface.jointE2eSuggested=true`（本回合 src 与 webui 双侧都有改动）→ 在产物中**加粗提示**"改动面横跨前后端，本轮联动回归必做"；此提示只进报告，不自动触发。
 3. **落盘**：产物写 `<被测系统>/e2e-artifacts/gate-preflight.md`，结构：
 
    ```markdown
    # 门禁预检 — <被测系统> <日期>
-   - runner: <unit_tests_ex|pytest|jest|...>
-   - decision: <pass|block> (<reason>)
-   - 基线: <count> 已知失败 <列名>
+   - runner: <unit_tests_ex|pytest|jest|vitest|mocha|node-test|cargo|gotest|dotnet|make>
+   - decision: <pass|block|unevaluated> (<reason>)
+   - 基线: <count> 已知失败 <列名>（partial=true 时注明"仅覆盖子集"）
    - 隔离区: <flaky 名单与命中次数>
    - 改动面: backend=<bool> frontend=<bool> joint=<bool>
-   - 结论: <可开联动 | 先修unit（清单）>
+   - 结论: <可开联动 | 先修unit（清单） | 无法评估（原因）>
    ```
 
 4. **交回总控**：产物路径与一句话结论返回。总控红线不变：名单与计划仍需用户确认后才执行 exec。

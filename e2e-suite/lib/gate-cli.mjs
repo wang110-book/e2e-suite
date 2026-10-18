@@ -13,8 +13,9 @@
 //   node gate-cli.mjs reset  [projectRoot]  # 清基线（等价 test_gate_reset）
 //   projectRoot 省略 = 当前目录（向上锚定由 gate-core 处理）
 //
-// Exit codes: 0 = pass / 1 = block / 2 = 用法错误。stdout 输出 JSON（可被
-// 任意 CI 解析），stderr 输出人读摘要。
+// Exit codes: 0 = pass / 1 = block / 2 = 用法错误 / 3 = unevaluated（门禁无法评估：
+// 测试器缺失、超时、输出溢出、输出不可解析——CI 应视为"未通过"或单独告警）。
+// stdout 输出 JSON（可被任意 CI 解析），stderr 输出人读摘要。
 import { findRoot, runGate, status, reset } from './gate-core.mjs'
 
 const [cmd, argRoot] = process.argv.slice(2)
@@ -27,9 +28,9 @@ if (!root || !['run', 'status', 'reset'].includes(cmd)) {
 
 let out, code = 0
 if (cmd === 'run') {
-  const r = runGate(root, { force: true, skipDirtyCheck: true })
+  const r = runGate(root, { force: true })
   out = r
-  code = r.decision === 'pass' ? 0 : 1
+  code = r.decision === 'pass' ? 0 : r.decision === 'block' ? 1 : 3
 } else if (cmd === 'reset') {
   out = reset(root)
 } else {

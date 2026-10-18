@@ -28,8 +28,10 @@ e2e-suite/                 唯一插件（一体化）
   ├─ skills/<21 个技能>
   ├─ lib/gate-core.mjs     平台无关判定引擎
   ├─ lib/gate-cli.mjs      任意宿主 CLI 入口
+  ├─ lib/family.mjs        家族成员发现与 before/after 拓扑编排
   ├─ hooks/                ZCode Stop/PostToolUse 薄壳
   └─ mcp/server.mjs        MCP stdio 薄壳
+tests/gate-core.test.mjs   门禁与编排的回归测试（node --test，零依赖）
 tools/sync.mjs             本机运行时 → 本仓库（维护者同步改动）
 tools/install.mjs          本仓库 → 本机运行时（维护者部署）
 ```
@@ -41,19 +43,37 @@ tools/install.mjs          本仓库 → 本机运行时（维护者部署）
 | `test_gate_status` | 只读查询：检测到的测试栈、脏文件、基线（已知失败）、抖动隔离区、日志尾部 | 想知道"门禁现在怎么看这个项目" |
 | `test_gate_run` | 立即完整跑一次判定（构建+测试+基线比对），不等 Stop 事件 | 想现在就要红绿灯结论（CI 式触发） |
 | `test_gate_reset` | 清除该项目门禁状态（基线/绿史/脏标记），回到"首红重新立基线"的宽容态 | 确实要重新宽容存量红时 |
-| `family_skills` | **家族测试入口**：扫描契约块发现全部在册成员，返回清单（phase/inputs/outputs）+ 拓扑编排计划（env→design→exec→assert→report→custom） | 想知道"这个项目装了哪些家族成员、联动该按什么顺序跑"；拿到计划后用宿主 Skill 工具逐个加载执行 |
+| `family_skills` | **家族测试入口**：扫描契约块发现全部在册成员，返回清单（phase/inputs/outputs）+ 按 `before`/`after` 拓扑排出的执行计划（env→design→exec→assert→report，custom 按约束插入；成环会显式报告 conflicts） | 想知道"这个项目装了哪些家族成员、联动该按什么顺序跑"；拿到计划后用宿主 Skill 工具逐个加载执行 |
 
 拦截本身在 hooks（Stop 收工把关）——MCP 工具只能被模型主动调用，无强制力；两者配合：hook 管"别忘了跑"，MCP 管"随时可查可触发"。`family_skills` 只发现与排程，不加载技能——加载与计划确认是宿主/用户的职责（编排红线不变）。
+
+### 三种判定结果
+
+| decision | 含义 | hook 行为 |
+|---|---|---|
+| `pass` | 全绿 / 失败都在基线或隔离区内 / 抖动放行 / 本回合没改代码 | 放行 |
+| `block` | 新增失败、回归、构建失败 | exit 2 打回会话 |
+| `unevaluated` | **门禁无法评估**：测试器缺失、超时、输出溢出、输出不可解析 | 放行会话但显式告警（不伪装成绿） |
+
+`unevaluated` 是 v1.2.0 新增的显式状态。此前超时（`ETIMEDOUT`）、输出超限（`ENOBUFS`）、解析失败都被折叠成 `pass`，看起来像一次成功把关。
 
 ## 非 ZCode 宿主 / CI 用法
 
 `e2e-suite/lib/gate-core.mjs` 是纯 Node 判定引擎（零宿主依赖），任何能跑 node 的地方：
 
 ```bash
-node e2e-suite/lib/gate-cli.mjs run /path/to/your-project    # 0=pass 1=block，stdout 为 JSON
+node e2e-suite/lib/gate-cli.mjs run /path/to/your-project    # 0=pass 1=block 3=unevaluated，stdout 为 JSON
 ```
 
-自己接宿主薄壳（hooks/MCP）参考 `e2e-suite/hooks/gate-hook.mjs`（35 行）即可。
+自己接宿主薄壳（hooks/MCP）参考 `e2e-suite/hooks/gate-hook.mjs` 即可。
+
+## 自测
+
+```bash
+node --test tests/gate-core.test.mjs
+```
+
+覆盖：基线生命周期、TIA 子集跑测、各运行器失败名解析、超时/输出溢出、构建失败、跨盘符脏标记、家族拓扑编排与成环检测。
 
 ## 家族契约（接入新成员）
 

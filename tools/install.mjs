@@ -55,11 +55,15 @@ for (const s of FAMILY_SKILLS) {
 }
 // 门禁：lib/hooks/mcp + 门禁 3 技能 → 市场源 + 缓存（.zcode-plugin 清单不覆盖，
 // 本机仍按 test-gate 身份加载）。家族技能不进市场源（它们装在 ~/.zcode/skills）。
+// mcp/server.mjs 只推市场源、不推已安装缓存：缓存是按版本号固化的 test-gate 0.2.0，
+// 把合并后的 e2e-suite MCP 塞进去会造成"清单叫 test-gate、工具叫 family_skills"的身份错配。
 const GATE_SKILLS = ['gate-guide', 'gate-preflight', 'tdd-loop'];
 for (const sub of ['lib', 'hooks', 'mcp']) {
   const src = path.join(PKG, sub);
   if (!fs.existsSync(src)) continue;
-  const targets = [path.join(GATE_MARKET, sub), ...installedCacheDirs().map(c => path.join(c, sub))];
+  const targets = sub === 'mcp'
+    ? [path.join(GATE_MARKET, sub)]
+    : [path.join(GATE_MARKET, sub), ...installedCacheDirs().map(c => path.join(c, sub))];
   for (const dst of targets) {
     const n = copyTree(src, dst);
     if (n) { console.log(`INSTALL  ${path.relative(ZCODE, dst)}（${n}）`); changed += n; }

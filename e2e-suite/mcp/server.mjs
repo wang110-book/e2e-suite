@@ -7,86 +7,14 @@
  * 实现：newline-delimited JSON-RPC 2.0 over stdio（MCP stdio transport），零依赖。
  */
 import { findRoot, runGate, status, reset } from '../lib/gate-core.mjs'
-import fs from 'node:fs'
-import path from 'node:path'
-import os from 'node:os'
-import { fileURLToPath } from 'node:url'
+import { discoverFamily, buildPlan } from '../lib/family.mjs'
 
-const SERVER = { name: 'e2e-suite', version: '1.1.0' }
+const SERVER = { name: 'e2e-suite', version: '1.2.0' }
 
 // ---------- 家族契约发现（纯读，宿主无关） ----------
 // 扫描根：插件自带 skills/（权威发布源）+ 用户运行时 skills 目录 + 项目级 .zcode/skills。
-// 解析 SKILL.md 的「## 家族契约（e2e-suite）」块；
-// 「e2e-suite-暂停」标记（detached）与无契约块的一律不入列。
-const CONTRACT_HEAD = /^##\s*家族契约（e2e-suite）\s*$/m
-const CONTRACT_DETACHED = /家族契约（e2e-suite-暂停）/
-const PHASE_ORDER = ['env', 'design', 'exec', 'assert', 'report']
-
-function skillSearchRoots(projectRoot) {
-  const here = path.dirname(fileURLToPath(import.meta.url))
-  const roots = [path.join(here, '..', 'skills')]
-  const userSkills = path.join(os.homedir(), '.zcode', 'skills')
-  if (!roots.includes(userSkills)) roots.push(userSkills)
-  if (projectRoot) roots.push(path.join(projectRoot, '.zcode', 'skills'))
-  return roots
-}
-
-function parseContract(md) {
-  const body = md.split(CONTRACT_HEAD)[1]
-  if (!body) return null
-  const block = body.split(/^##\s/m)[0]
-  const get = (key) => {
-    const m = new RegExp(`^-\\s*${key}:\\s*(.+)$`, 'm').exec(block)
-    return m ? m[1].trim() : ''
-  }
-  const phase = get('phase')
-  if (!phase) return null
-  return {
-    phase, before: get('before'), after: get('after'),
-    inputs: get('inputs'), outputs: get('outputs'), idempotent: get('idempotent'),
-  }
-}
-
-function discoverFamily(projectRoot) {
-  const members = []
-  const seen = new Set()
-  for (const root of skillSearchRoots(projectRoot)) {
-    let dirs = []
-    try { dirs = fs.readdirSync(root, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name) }
-    catch { continue }
-    for (const d of dirs) {
-      if (seen.has(d)) continue
-      const f = path.join(root, d, 'SKILL.md')
-      let md
-      try { md = fs.readFileSync(f, 'utf8') } catch { continue }
-      if (CONTRACT_DETACHED.test(md)) continue
-      if (!CONTRACT_HEAD.test(md)) continue
-      const c = parseContract(md)
-      if (!c) continue
-      seen.add(d)
-      members.push({ name: d, source: path.dirname(f), ...c })
-    }
-  }
-  // 编排计划：phase 默认序 + before/after 约束（简单稳定排序，冲突时以声明为准提示人工裁决）
-  const rank = (m) => {
-    let r = PHASE_ORDER.indexOf(m.phase)
-    if (r < 0) r = 99 // custom：先按 after 挂到声明的槽位后
-    return r
-  }
-  const plan = members
-    .slice()
-    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
-    .map(m => m.name)
-  // custom 成员有 after 的，尽量排到该成员之后（一次修正，不迭代防环）
-  for (const m of members.filter(x => x.after)) {
-    const anchor = plan.find(n => n === m.after.split(/[,，]/)[0].trim())
-    const i = plan.indexOf(m.name)
-    if (anchor && i >= 0 && plan.indexOf(anchor) >= i) {
-      plan.splice(i, 1); plan.splice(plan.indexOf(anchor) + 1, 0, m.name)
-    }
-  }
-  return { members, plan }
-}
+// 解析 SKILL.md 的「## 家族契约（e2e-suite）」块；detached 与无契约块的不入列。
+// 发现与排序逻辑在 lib/family.mjs（供 MCP、CLI 与自测共用）。
 
 const TOOLS = [
   {
@@ -131,11 +59,14 @@ function callTool(name, args) {
   }
   if (name === 'test_gate_reset') return { projectRoot: root, ...reset(root) }
   if (name === 'family_skills') {
-    const { members, plan } = discoverFamily(root)
-    const filtered = args?.phase ? members.filter(m => m.phase === args.phase) : members
+    const all = discoverFamily(root)
+    const members = args?.phase ? all.filter(m => m.phase === args.phase) : all
+    // 过滤后重新排程（否则被过滤掉的成员名会让 before/after 锚点失效）
+    const { plan, conflicts } = buildPlan(members)
     return {
-      members: filtered,
-      plan: args?.phase ? plan.filter(n => filtered.some(m => m.name === n)) : plan,
+      members,
+      plan,
+      conflicts,
       howToUse: '把 plan 名单与顺序呈现给用户确认后，用宿主 Skill 工具逐个加载成员执行；' +
         'env 成员先跑、产物落盘后 exec 才开跑（下游只认落盘产物）。',
     }
