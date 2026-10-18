@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// install.mjs — 本仓库 → ZCode 运行时（新机器/新平台部署）
+// install.mjs — 本仓库 → ZCode 运行时（维护者部署用；普通用户请走插件市场安装）
 //
-// 方向：仓库 skills/<家族技能> 与 plugins/test-gate 写入 ~/.zcode。
+// 部署两件事：
+//   1) 家族技能 → ~/.zcode/skills/<name>（总控动态发现依赖它们在此）
+//   2) test-gate 插件 → 本地市场源 + 已安装版本缓存（若存在）
 // 幂等：内容相同跳过；不同则覆盖（运行时改动请先用 sync.mjs 回仓库）。
 // 用法：node tools/install.mjs [--dry]
 import fs from 'node:fs';
@@ -13,15 +15,10 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ZCODE = path.join(os.homedir(), '.zcode');
 const DRY = process.argv.includes('--dry');
 
+const SKILLS_SRC = path.join(REPO, 'e2e-suite-skills/skills');
 const SKILLS_DST = path.join(ZCODE, 'skills');
-const PLUGIN_MARKET = path.join(ZCODE, 'cli/plugins/marketplaces/dev-default-plugins/test-gate');
-// 已安装版本缓存：若存在则一并同步（ZCode 实际加载的是这份）
-function installedCacheDirs() {
-  const root = path.join(ZCODE, 'cli/plugins/cache/dev-default-plugins/test-gate');
-  if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root).filter(d => /^\d+\.\d+\.\d+$/.test(d))
-    .map(d => path.join(root, d));
-}
+const GATE_SRC = path.join(REPO, 'test-gate');
+const GATE_MARKET = path.join(ZCODE, 'cli/plugins/marketplaces/dev-default-plugins/test-gate');
 
 function copyTree(src, dst) {
   let n = 0;
@@ -37,19 +34,25 @@ function copyTree(src, dst) {
   return n;
 }
 
+// 已安装版本缓存：ZCode 实际加载的是这份，存在才同步
+function installedCacheDirs() {
+  const root = path.join(ZCODE, 'cli/plugins/cache/dev-default-plugins/test-gate');
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root).filter(d => /^\d+\.\d+\.\d+$/.test(d))
+    .map(d => path.join(root, d));
+}
+
 let changed = 0;
-const skillsSrc = path.join(REPO, 'skills');
-for (const e of fs.readdirSync(skillsSrc, { withFileTypes: true })) {
+for (const e of fs.readdirSync(SKILLS_SRC, { withFileTypes: true })) {
   if (!e.isDirectory()) continue;
-  const n = copyTree(path.join(skillsSrc, e.name), path.join(SKILLS_DST, e.name));
+  const n = copyTree(path.join(SKILLS_SRC, e.name), path.join(SKILLS_DST, e.name));
   if (n) { console.log(`INSTALL  skills/${e.name}（${n}）`); changed += n; }
 }
-const pg = path.join(REPO, 'plugins/test-gate');
-if (fs.existsSync(pg)) {
-  const n = copyTree(pg, PLUGIN_MARKET);
-  if (n) { console.log(`INSTALL  插件市场源（${n}）`); changed += n; }
+if (fs.existsSync(GATE_SRC)) {
+  const n = copyTree(GATE_SRC, GATE_MARKET);
+  if (n) { console.log(`INSTALL  插件市场源 test-gate（${n}）`); changed += n; }
   for (const c of installedCacheDirs()) {
-    const m = copyTree(pg, c);
+    const m = copyTree(GATE_SRC, c);
     if (m) { console.log(`INSTALL  插件缓存 ${path.basename(c)}（${m}）`); changed += m; }
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// sync.mjs — 运行时 → 本仓库（日常开发后同步改动）
+// sync.mjs — 运行时 → 本仓库（维护者日常开发后同步改动）
 //
 // 方向：~/.zcode/skills/<家族技能> 与 test-gate 插件市场源 复制到仓库。
 // 只同步家族成员（清单见 FAMILY_SKILLS），其余技能不碰。
@@ -23,7 +23,7 @@ const FAMILY_SKILLS = [
   'visual-regression', 'whitebox-suite',
 ];
 const PLUGIN_SRC = path.join(ZCODE, 'cli/plugins/marketplaces/dev-default-plugins/test-gate');
-const PLUGIN_DST = path.join(REPO, 'plugins/test-gate');
+const PLUGIN_DST = path.join(REPO, 'test-gate');
 
 function copyTree(src, dst) {
   let n = 0;
@@ -44,12 +44,12 @@ let changed = 0;
 for (const s of FAMILY_SKILLS) {
   const src = path.join(ZCODE, 'skills', s);
   if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（运行时不存在）`); continue; }
-  const n = copyTree(src, path.join(REPO, 'skills', s));
+  const n = copyTree(src, path.join(REPO, 'e2e-suite-skills/skills', s));
   if (n) { console.log(`SYNC  ${s}（${n} 个文件有差异）`); changed += n; }
 }
 if (fs.existsSync(PLUGIN_SRC)) {
   const n = copyTree(PLUGIN_SRC, PLUGIN_DST);
-  if (n) { console.log(`SYNC  plugins/test-gate（${n} 个文件有差异）`); changed += n; }
+  if (n) { console.log(`SYNC  test-gate（${n} 个文件有差异）`); changed += n; }
 }
 console.log(DRY && changed ? `dry-run：${changed} 个文件将更新` :
   changed ? `完成：${changed} 个文件已同步（记得 git commit）` : '无差异，仓库已是最新');
