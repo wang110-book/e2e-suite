@@ -23,6 +23,7 @@ wang110-book/e2e-suite
 
 ```
 marketplace.json           市场清单（github 源格式；.claude-plugin/ 下同步一份兼容）
+CHANGELOG.md               版本历史（对外行为变化；发版时与 bump 同步维护）
 e2e-suite/                 唯一插件（一体化）
   ├─ .zcode-plugin/plugin.json   插件清单（声明 skills + hooks + mcpServers）
   ├─ skills/<22 个技能>
@@ -33,8 +34,8 @@ e2e-suite/                 唯一插件（一体化）
   └─ mcp/server.mjs        MCP stdio 薄壳
 tests/gate-core.test.mjs   门禁与编排的回归测试（node --test，零依赖）
 tools/bump.mjs             统一五处版本号（发版必跑，否则客户端更新不到）
-tools/sync.mjs             本机运行时 → 本仓库（维护者同步改动）
-tools/install.mjs          本仓库 → 本机运行时（维护者部署）
+tools/sync.mjs             本机已安装插件/运行时 → 本仓库（维护者同步改动）
+tools/install.mjs          本仓库 → 本机运行时（维护者热调，版本门控）
 ```
 
 ## 发版流程（重要）
@@ -45,11 +46,12 @@ ZCode 的插件更新是**版本号驱动**的：`marketplace.json` 里的 `vers
 
 ```bash
 node tools/bump.mjs 1.3.0     # 统一 package.json / 两份 marketplace / plugin.json / server.mjs
+# 在 CHANGELOG.md 顶部追加本次条目（新增/修复/变更三栏，只记对外行为）
 node --test tests/gate-core.test.mjs
 git add -A && git commit -m "..." && git push
 ```
 
-`bump.mjs --check` 会校验五处是否一致，已接入测试（第 14 条用例），漏改会被门禁拦下。
+`bump.mjs --check` 会校验五处是否一致，已接入回归测试用例，漏改会被门禁拦下。
 
 客户端更新（三步，缺一不可）：
 
@@ -79,9 +81,9 @@ zcode plugins update e2e-suite@e2e-suite   # 先刷新市场再拉新版本
 | `block` | 新增失败、回归、构建失败 | exit 2 打回会话 |
 | `unevaluated` | **门禁无法评估**：测试器缺失、超时、输出溢出、输出不可解析 | 放行会话但显式告警（不伪装成绿） |
 
-`unevaluated` 是 v1.2.0 新增的显式状态。此前超时（`ETIMEDOUT`）、输出超限（`ENOBUFS`）、解析失败都被折叠成 `pass`，看起来像一次成功把关。
+`unevaluated` 把"门禁坏了"与"测试通过了"区分开（此前超时、输出溢出、解析失败都被折叠成 `pass`）。各能力的版本沿革见 [CHANGELOG.md](CHANGELOG.md)。
 
-### 测试文件命名空间（v1.2.2）
+### 测试文件命名空间
 
 写测试文件的放置与命名规范，作为独立技能 [test-namespace](e2e-suite/skills/test-namespace/SKILL.md) 交付（`description` 命中"新建/移动测试、测试没跑起来、审查测试树"即触发）：目录 `tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`、C++ 需注册进聚合目标）。
 

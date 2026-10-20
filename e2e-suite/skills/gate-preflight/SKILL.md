@@ -1,6 +1,6 @@
 ---
 name: gate-preflight
-description: 前后端联动测试开跑前的单元测试门禁体检（e2e-suite 家族 env 槽成员）。读取/触发 test-gate 插件的单元级门禁判定，产出"便宜层是否已绿"的环境说明，联动回归（exec 层黑盒）只在门禁绿后开跑——unit 红先修便宜层，不浪费浏览器与真实节点流量。当总控编排联动测试、或用户要求"先体检门禁""门禁预检""确认单测状态再联调"时使用。E2E-suite env-slot preflight skill。属于 e2e-suite 技能家族（phase=env），家族契约见 frontend-backend-e2e 的 references/suite-contract.md。
+description: 前后端联动测试开跑前的单元测试门禁体检（e2e-suite 家族 env 槽成员）。读取/触发本插件 test-gate 门禁的单元级判定，产出"便宜层是否已绿"的环境说明，联动回归（exec 层黑盒）只在门禁绿后开跑——unit 红先修便宜层，不浪费浏览器与真实节点流量。当总控编排联动测试、或用户要求"先体检门禁""门禁预检""确认单测状态再联调"时使用。E2e-suite env-slot preflight skill。属于 e2e-suite 技能家族（phase=env），家族契约见 frontend-backend-e2e 的 references/suite-contract.md。
 ---
 
 # 门禁预检（gate-preflight）
@@ -47,4 +47,4 @@ description: 前后端联动测试开跑前的单元测试门禁体检（e2e-sui
   - 已接入 → 产物结论升级为"**无门禁覆盖，建议先由 harness-scaffold 造测试栈**（脚手架就位后 gate 自动检测纳入）"，把这条建议连同 scaffold 的 inputs（项目根/技术栈）一并交回总控，让总控在计划里排入 scaffold 成员；用户否决建议则按原样放行并标注"联动自行负责发现缺陷"。
   - 未接入（无该成员）→ 退回原行为：产出"无 unit 门禁覆盖，联动自行负责发现缺陷"并放行。
   两种情况缺口都如实标注，不静默。
-- 对未装 test-gate 插件的环境：第 1 步退化为读状态文件，读不到则在产物中写明"门禁不可达"并放行（防御性原则：基建缺失不卡编排）。
+- 对未安装 e2e-suite 插件（或其 test-gate 门禁部分）的环境：第 1 步退化为读状态文件，读不到则在产物中写明"门禁不可达"并放行（防御性原则：基建缺失不卡编排）。

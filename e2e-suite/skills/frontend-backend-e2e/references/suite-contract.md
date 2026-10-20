@@ -21,7 +21,7 @@
 
 | phase | 职责 | 当前成员 |
 |---|---|---|
-| `env` | 环境准备：版本确认/配置开关/观测预置/凭据与样例数据/备份还原/清理核验/**门禁体检/测试栈脚手架** | gate-preflight（test-gate 插件内，联动开跑先过 unit 闸） · harness-scaffold（项目无测试栈时按蓝图造脚手架，gate 随后自动纳入） · tool-config-guide（本机） |
+| `env` | 环境准备：版本确认/配置开关/观测预置/凭据与样例数据/备份还原/清理核验/**门禁体检/测试栈脚手架** | gate-preflight（e2e-suite 插件内，联动开跑先过 unit 闸） · harness-scaffold（项目无测试栈时按蓝图造脚手架，gate 随后自动纳入） · tool-config-guide（本机） |
 | `design` | 测试集设计：用例矩阵/用例卡片/分级回归圈定 | test-case-design |
 | `exec` | 测试执行：GUI 自动化/接口驱动/黑盒操作 | blackbox-e2e-test（功能侧） · negative-path-test · persistence-boundary-test · ux-acceptance-test（需求侧） · visual-design-review（视觉设计） · streaming-channel-test（流式/异步通道） |
 | `assert` | 独立断言/校验器：契约比对/回归比对 | api-contract-diff · visual-regression |
@@ -62,13 +62,13 @@
 - 缺口 = 计划不成立 → 提示用户缺哪类成员，而不是静默跳过；
 - 产物要落盘（环境说明/用例集/报告），保证任意成员可独立重跑与人工介入；
 - **跨轮持久产物：用例集**（`test-cases-vN.md`）——exec 类成员以上轮文件为回归基线；每轮结束后由 design 类成员按"结算"纪律自主迭代出 `v(N+1)`（晋升三条件/防臃肿闸门，见 test-case-design 技能），旧版本保留、不过名覆盖。
+- **跨轮持久产物：金丝雀语料与进化日志**（`canary.md` / `evolution-log.md`）——种子经"缺陷修复→通用性筛选→种子化"闭环入库；家族自进化以"日志可回退"为前提，用户可随时否决回退。
 
 ## 三点五、测试文件命名空间（v1.2.2 起）
 
 成员产出或修改测试文件时，一律遵循 [test-namespace 技能](../../test-namespace/SKILL.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`）。
 
 **这不是风格偏好**：写在 runner 发现规则之外的测试文件永远不会被执行，而门禁会照常判定绿色——"假绿"由此产生。门禁在写时与收工两处给警告，不拦截。
-- **跨轮持久产物：金丝雀语料与进化日志**（`canary.md` / `evolution-log.md`）——种子经"缺陷修复→通用性筛选→种子化"闭环入库；家族自进化以"日志可回退"为前提，用户可随时否决回退。
 
 ## 四、总控的发现机制
 

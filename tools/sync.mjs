@@ -1,13 +1,14 @@
 #!/usr/bin/env node
-// sync.mjs — 运行时 → 本仓库（维护者日常开发后同步改动）
+// sync.mjs — 本机运行时 → 本仓库（维护者日常开发后同步改动）
 //
-// 方向：~/.zcode/skills/<家族技能> 与 test-gate 插件市场源 复制到仓库单插件
-// e2e-suite/skills/。只同步家族成员（清单见 FAMILY_SKILLS）+ 门禁 3 技能，
-// 其余技能不碰。
+// 数据源（2026-10-18 改版：旧 dev-default-plugins 市场已删除，本工具曾整体静默失效）：
+//   1) ~/.zcode/skills/<家族技能>            ——install 部署的运行时副本
+//   2) 已安装插件缓存 e2e-suite@e2e-suite    ——读 installed_plugins.json 的 installPath，
+//      版本目录变化自动跟随，不再写死路径
+// 方向：运行时较新 → 回灌仓库；仓库权威件（plugin.json / mcp / 清单）永不反向覆盖。
 //
-// 安全阀（2026-10-18）：默认**只报告差异不写入**——本机运行时常常落后于仓库
-// （例如还没 install 新版本），盲目回灌会把仓库里刚改的实现静默覆盖。确认运行时
-// 才是较新的一方后，加 --force 才真正覆盖。
+// 安全阀：默认**只报告差异不写入**——本机运行时常常落后于仓库，盲目回灌会把仓库里
+// 刚改的实现静默覆盖。确认运行时才是较新的一方后，加 --force 才真正覆盖。
 // 用法：node tools/sync.mjs [--dry] [--force]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,7 +21,7 @@ const ZCODE = path.join(HOME, '.zcode');
 const DRY = process.argv.includes('--dry');
 const FORCE = process.argv.includes('--force');
 
-// 家族成员（带契约标记的 17 个 + 总控）；新增成员时在此登记
+// 家族成员（带契约块的成员 + 总控）；新增成员时在此登记
 const FAMILY_SKILLS = [
   'api-contract-diff', 'blackbox-e2e-test', 'canary-bootstrap', 'canary-calibration',
   'e2e-env-setup', 'frontend-backend-e2e', 'harness-scaffold', 'negative-path-test',
@@ -28,10 +29,24 @@ const FAMILY_SKILLS = [
   'test-case-design', 'test-namespace', 'tool-config-guide', 'ux-acceptance-test', 'visual-design-review',
   'visual-regression', 'whitebox-suite',
 ];
-// 门禁自带技能（住在插件市场源，不在 ~/.zcode/skills）
+// 门禁自带技能（住在插件缓存，不在 ~/.zcode/skills）
 const GATE_SKILLS = ['gate-guide', 'gate-preflight', 'tdd-loop'];
-const PLUGIN_SRC = path.join(ZCODE, 'cli/plugins/marketplaces/dev-default-plugins/test-gate');
 const PKG_DST = path.join(REPO, 'e2e-suite');
+
+// 已安装插件的实际路径：从 installed_plugins.json 解析，版本升级后不用改这个文件
+function installedPluginRoot(idWanted) {
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(ZCODE, 'cli/plugins/installed_plugins.json'), 'utf8'));
+    const e = (j.plugins || []).find(p => p.id === idWanted);
+    if (e && e.installPath && fs.existsSync(e.installPath)) return e.installPath;
+  } catch {}
+  // 退回：扫缓存目录取最高 semver
+  const root = path.join(ZCODE, 'cli/plugins/cache/e2e-suite/e2e-suite');
+  if (!fs.existsSync(root)) return null;
+  const vers = fs.readdirSync(root).filter(d => /^\d+\.\d+\.\d+$/.test(d)).sort();
+  return vers.length ? path.join(root, vers[vers.length - 1]) : null;
+}
+const PLUGIN_SRC = installedPluginRoot('e2e-suite@e2e-suite');
 
 function copyTree(src, dst) {
   let n = 0;
@@ -43,7 +58,6 @@ function copyTree(src, dst) {
       const need = !fs.existsSync(d) ||
         fs.readFileSync(s).compare(fs.readFileSync(d)) !== 0;
       if (need) {
-        // 运行时副本可能是旧的（合并前/未部署）：默认只报告，需 --force 才覆盖仓库
         if (DRY || !FORCE) { console.log(`  DIFF  ${path.relative(REPO, d)}（运行时与仓库不同${FORCE ? '' : '，未写入；确认要回灌请加 --force'}）`); n++; }
         else { fs.copyFileSync(s, d); n++; }
       }
@@ -55,42 +69,28 @@ function copyTree(src, dst) {
 let changed = 0;
 for (const s of FAMILY_SKILLS) {
   const src = path.join(ZCODE, 'skills', s);
-  if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（运行时不存在）`); continue; }
+  if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（~/.zcode/skills 下不存在）`); continue; }
   const n = copyTree(src, path.join(PKG_DST, 'skills', s));
   if (n) { console.log(`SYNC  ${s}（${n} 个文件有差异）`); changed += n; }
 }
-for (const s of GATE_SKILLS) {
-  const src = path.join(PLUGIN_SRC, 'skills', s);
-  if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（插件源不存在）`); continue; }
-  const n = copyTree(src, path.join(PKG_DST, 'skills', s));
-  if (n) { console.log(`SYNC  gate:${s}（${n}）`); changed += n; }
-}
-// 门禁引擎/壳（除 skills 与 .zcode-plugin 外的全部）
-// 注意：.zcode-plugin/plugin.json 不反向同步——合并插件的清单以仓库为权威
-// （名字/版本/描述都已改为 e2e-suite，拷回 test-gate 的会覆盖掉）
-// 注意：mcp/server.mjs 不反向同步——本机市场源可能仍是合并前的 test-gate 版本，
-// 它没有 family_skills；反向拷贝会把仓库的新实现静默覆盖掉（2026-10-18 实测踩到）。
-const SYNC_SUBS = ['lib', 'hooks']
-for (const sub of SYNC_SUBS) {
-  const src = path.join(PLUGIN_SRC, sub);
-  if (!fs.existsSync(src)) continue;
-  const n = copyTree(src, path.join(PKG_DST, sub));
-  if (n) { console.log(`SYNC  gate:${sub}（${n}）`); changed += n; }
-}
-const repoMcp = path.join(PKG_DST, 'mcp/server.mjs');
-const srcMcp = path.join(PLUGIN_SRC, 'mcp/server.mjs');
-if (fs.existsSync(srcMcp) && fs.existsSync(repoMcp)
-    && fs.readFileSync(srcMcp).compare(fs.readFileSync(repoMcp)) !== 0) {
-  console.log('SKIP  gate:mcp（市场源版本与仓库不同——MCP 以仓库为权威，不反向覆盖）');
-}
-const mcpJson = path.join(PLUGIN_SRC, '.mcp.json');
-if (fs.existsSync(mcpJson)) {
-  const dst = path.join(PKG_DST, '.mcp.json');
-  const need = !fs.existsSync(dst) || fs.readFileSync(mcpJson).compare(fs.readFileSync(dst)) !== 0;
-  if (need) {
-    if (DRY || !FORCE) console.log(`  DIFF  e2e-suite/.mcp.json（运行时与仓库不同${FORCE ? '' : '，未写入；确认要回灌请加 --force'}）`);
-    else { fs.copyFileSync(mcpJson, dst); console.log('SYNC  gate:.mcp.json'); }
-    changed++;
+if (!PLUGIN_SRC) {
+  console.log('SKIP  门禁部分（未找到 e2e-suite 已安装缓存；跑 install 或经市场安装后才有）');
+} else {
+  console.log(`（门禁数据源：${PLUGIN_SRC}）`);
+  for (const s of GATE_SKILLS) {
+    const src = path.join(PLUGIN_SRC, 'skills', s);
+    if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（插件缓存中不存在）`); continue; }
+    const n = copyTree(src, path.join(PKG_DST, 'skills', s));
+    if (n) { console.log(`SYNC  gate:${s}（${n}）`); changed += n; }
+  }
+  // 引擎与薄壳：只同步 lib/hooks。
+  // mcp/、.zcode-plugin/、.mcp.json 不回灌——插件清单与 MCP 以仓库为权威
+  // （缓存只是发布物的落地拷贝，仓库里有更新未发布的实现时反向拷贝会静默覆盖）
+  for (const sub of ['lib', 'hooks']) {
+    const src = path.join(PLUGIN_SRC, sub);
+    if (!fs.existsSync(src)) continue;
+    const n = copyTree(src, path.join(PKG_DST, sub));
+    if (n) { console.log(`SYNC  gate:${sub}（${n}）`); changed += n; }
   }
 }
 console.log(DRY && changed ? `dry-run：${changed} 个文件有差异`
