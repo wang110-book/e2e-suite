@@ -43,6 +43,17 @@ description: 测试门禁（test-gate）使用与恢复指南。当被 [test-gat
 - `TEST_GATE_SKIP=1` — 单次收工跳过。
 - 状态目录：`%TEMP%\zcode-test-gate\<项目哈希>\`（gate.log / baseline.json / quarantine.json / ever-green）。
 
+## 测试文件命名空间（v1.2.2 起）
+
+写测试文件时遵循 [test-namespace 规范](../harness-scaffold/references/test-namespace.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名。**写在 runner 发现规则之外的文件永不执行**，门禁会照常绿——这是假绿的头号来源。
+
+门禁在两种时机给出命名空间警告（都不拦截，`TEST_GATE_NS=0` 可关）：
+
+- **写时**（PostToolUse）：你刚把测试写到规范外，立刻在 stderr 看到 `[test-gate][namespace]`；
+- **收工**（Stop）：判定结果的 `nsWarnings` 里带本回合去重后的清单。
+
+两类警告：`test-outside-namespace`（测试命名的文件在 tests/ 树外，Go/Rust 同位置惯例除外）、`test-will-not-be-discovered`（tests/ 树内但命名不匹配发现规则）。
+
 ## 栈检测范围（自动，零配置）
 
 npm/pnpm/yarn/bun（package.json test 脚本，按脚本内容识别 jest/vitest/mocha/node --test）、pytest（+TIA）、cargo、go（+TIA）、dotnet(.sln)、CMake+VS（unit_tests 目标，cmake 路径自动从 CMakeCache 解析）、make（test 目标）。检测不到测试栈 → 放行（本回合无栈可跑）；测试器缺失/超时/输出溢出 → `unevaluated` 并告警（门禁坏了绝不卡会话，但也绝不谎报绿）。

@@ -81,6 +81,19 @@ zcode plugins update e2e-suite@e2e-suite   # 先刷新市场再拉新版本
 
 `unevaluated` 是 v1.2.0 新增的显式状态。此前超时（`ETIMEDOUT`）、输出超限（`ENOBUFS`）、解析失败都被折叠成 `pass`，看起来像一次成功把关。
 
+### 测试文件命名空间（v1.2.2）
+
+写测试文件时遵循 [test-namespace 规范](e2e-suite/skills/harness-scaffold/references/test-namespace.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`、C++ 需注册进聚合目标）。
+
+**为什么重要**：runner 只发现符合其命名规则的文件。写在规则之外的测试**永远不会执行**，而门禁照常判定绿色——这是"假绿"的主要来源。
+
+门禁在两处给警告（都不拦截，`TEST_GATE_NS=0` 可关）：
+
+- **写时**：PostToolUse 检测到偏离立刻在 stderr 打 `[test-gate][namespace]`，agent 当轮就能改；
+- **收工**：Stop 判定结果的 `nsWarnings` 里带去重清单。
+
+两类：`test-outside-namespace`（测试文件在 tests/ 树外，Go/Rust 同位置惯例除外）、`test-will-not-be-discovered`（tests/ 树内但命名不符发现规则）。
+
 ## 非 ZCode 宿主 / CI 用法
 
 `e2e-suite/lib/gate-core.mjs` 是纯 Node 判定引擎（零宿主依赖），任何能跑 node 的地方：

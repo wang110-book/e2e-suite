@@ -28,6 +28,7 @@ description: 强制 Red-Green-Refactor 三段 TDD 纪律：用三个互相隔离
 
 🔴 派发 `general-purpose` 子代理，提示词包含：
 - 功能需求描述与期望行为；**不透露任何实现设想**。
+- **测试文件放置**：遵循 [test-namespace 规范](../harness-scaffold/references/test-namespace.md)——先看项目已有测试树跟着放；没有就建 `tests/<层级>/`（unit/api/e2e/ui），命名按对应语言绑定表（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`）。**写在 runner 发现规则之外 = 测试永不执行 = 假绿**。
 - 先读项目现有测试学习结构与命名，按其构建系统注册新测试（示例：C++/CMake 项目把 `tests/test_<模块>.cpp` 加进聚合测试目标）。
 - 断言完整描述期望行为，含错误分支；AAA 结构；一测一断言优先。
 - **禁止写任何实现代码**（实现源目录一个字节都不许碰）。

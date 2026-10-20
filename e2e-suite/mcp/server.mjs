@@ -9,7 +9,7 @@
 import { findRoot, runGate, status, reset } from '../lib/gate-core.mjs'
 import { discoverFamily, buildPlan } from '../lib/family.mjs'
 
-const SERVER = { name: 'e2e-suite', version: '1.2.1' }
+const SERVER = { name: 'e2e-suite', version: '1.2.2' }
 
 // ---------- 家族契约发现（纯读，宿主无关） ----------
 // 扫描根：插件自带 skills/（权威发布源）+ 用户运行时 skills 目录 + 项目级 .zcode/skills。

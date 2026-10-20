@@ -67,6 +67,45 @@ const CODE_EXT = new Set(['.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.hxx', '.p
   '.html', '.htm', '.css', '.scss', '.less', '.vue', '.svelte'])
 const MANIFEST = new Set(['package.json', 'Cargo.toml', 'CMakeLists.txt', 'go.mod', 'pyproject.toml',
   'setup.py', 'requirements.txt', 'Makefile', 'meson.build', 'build.ninja'])
+
+// ── 测试文件命名空间（规范见 skills/harness-scaffold/references/test-namespace.md）──
+// 两类偏离，各一条警告（均不拦截；TEST_GATE_NS=0 整体关闭）：
+//   test-outside-namespace  —— 测试命名的文件写在 tests/ 树外（Go/Rust 惯例除外）
+//   test-will-not-be-discovered —— tests/ 树内的代码文件不匹配 runner 发现命名（假绿源头）
+const NS_ROOT = /^(tests?|spec|__tests__)\//i
+// 只有规范指定的共享/数据目录整树豁免；其余位置（含 tests/ 根下的 helpers.py）仍按发现规则检查
+const NS_EXEMPT = /^(tests?|spec|__tests__)\/(harness|testdata|fixtures)\//i
+// pytest 约定文件：在 tests/ 树内但不是用例，不算命名偏离
+const NS_PY_SPECIAL = /^(conftest\.py|__init__\.py|pytest\.ini)$/i
+const NS_TEST_JS = /\.(test|spec)\.[cm]?[jt]sx?$/i
+const NS_TEST_PY = /^test_.*\.py$|_test\.py$/i
+const NS_TEST_GO = /_test\.go$/i          // Go 惯例：与源码同目录，不算偏离
+const NS_TEST_CS = /Tests\.cs$/i
+const NS_TEST_CPP = /_?tests?\.(cpp|cc|cxx)$/i
+const NS_IMPL = /\.(m|c|cc|cpp|cxx|h|hpp|py|js|mjs|cjs|ts|tsx|jsx|go|cs|java|kt|rb|php|swift|scala)$/i
+
+export function checkNamespace(rel) {
+  if (process.env.TEST_GATE_NS === '0') return null
+  const r = rel.replace(/\\/g, '/')
+  if (/(^|\/)(vendor|node_modules)\//.test(r)) return null
+  const base = r.split('/').pop() || ''
+  if (NS_PY_SPECIAL.test(base)) return null
+  if (NS_TEST_GO.test(base)) return null                    // Go 同位置惯例
+  if (/\.rs$/i.test(base)) return null                        // Rust：src 内 #[cfg(test)] 与 tests/*.rs 都是正典
+  const looksTest = NS_TEST_JS.test(base) || NS_TEST_PY.test(base) || NS_TEST_CS.test(base) || NS_TEST_CPP.test(base)
+  if (looksTest && !NS_ROOT.test(r)) {
+    return { code: 'test-outside-namespace', file: r,
+      msg: `测试命名的文件在 tests/ 命名空间之外：${r}（Go/Rust 同位置惯例除外）`,
+      fix: '建议移到 tests/<层级>/，命名按 test-namespace 规范（unit/api/e2e/ui 四层）' }
+  }
+  if (NS_ROOT.test(r) && !NS_EXEMPT.test(r) && !looksTest && NS_IMPL.test(base)) {
+    return { code: 'test-will-not-be-discovered', file: r,
+      msg: `tests/ 树内的代码文件不匹配 runner 的测试发现命名：${r}——若它是测试，永远不会被执行（假绿）`,
+      fix: '是测试→改名为 test_*.py / *.test.*；是共享代码→移到 tests/harness/ 或 tests/testdata/' }
+  }
+  return null
+}
+
 export function isCodePath(rel) {
   const r = rel.replace(/\\/g, '/')
   const base = r.split('/').pop() || ''
@@ -81,11 +120,13 @@ export function markEdit(projectRoot, filePath) {
   const abs = path.resolve(projectRoot, filePath)
   const rel = path.relative(projectRoot, abs).replace(/\\/g, '/')
   // 跨盘符时 path.relative 返回绝对路径（不以 .. 开头），必须显式排除，否则项目外改动也会触发跑测
-  if (!path.isAbsolute(rel) && !rel.startsWith('..') && isCodePath(rel)) {
+  const inside = !path.isAbsolute(rel) && !rel.startsWith('..')
+  if (inside && isCodePath(rel)) {
     fs.mkdirSync(st.stateDir, { recursive: true })
     fs.appendFileSync(st.markerPath, rel + '\n')
   }
-  return { marked: true }
+  // 写时命名空间校验：agent 刚把测试写到规范外的那一刻就有反馈（比 Stop 收工才提醒早一轮）
+  return { marked: true, nsWarning: inside ? checkNamespace(rel) : null }
 }
 
 // ── 失败名解析（各运行器输出格式不同，不能共用 jest 的符号行）───────────────
@@ -234,6 +275,26 @@ export function detect(projectRoot) {
 // ── TIA 影响面选择（Datadog/mabl 口径：只跑受影响；映射不全 → 安全侧全量，只多跑不漏跑）──
 // 脏文件为空 → 返回 null（调用方退回全量）。映射失败/共享面命中 → null（全量）。
 function selectPytest(projectRoot) {
+  // 递归收集 tests/ 树下的测试文件（支持 tests/unit/、tests/api/ 等分层命名空间）
+  const testIndex = (() => {
+    const index = new Map()   // test_<module>.py 文件名 → 相对路径
+    const walk = (dir, depth) => {
+      if (depth > 6) return
+      let entries = []
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        if (e.name === 'node_modules' || e.name === '.git' || e.name === '__pycache__') continue
+        const full = path.join(dir, e.name)
+        if (e.isDirectory()) { walk(full, depth + 1); continue }
+        if (!/^(test_.*|.*_test)\.py$/.test(e.name)) continue
+        const rel = path.relative(projectRoot, full).replace(/\\/g, '/')
+        if (!index.has(e.name)) index.set(e.name, rel)
+      }
+    }
+    for (const d of ['tests', 'test']) walk(path.join(projectRoot, d), 0)
+    return index
+  })()
+
   return (_root, dirtyFiles) => {
     if (!dirtyFiles || !dirtyFiles.length) return null
     const targets = new Set()
@@ -241,11 +302,11 @@ function selectPytest(projectRoot) {
     for (const f of dirtyFiles) {
       const base = f.split('/').pop() || ''
       // 测试文件本身直接进目标
-      if (/^test_.*\.py$/.test(base) || /\.py$/.test(base) && testDirs.includes(f.split('/')[0])) { targets.add(f); continue }
-      // 源文件 → 同名测试（经典 test_<module>.py 命名映射）；找不到 → 全量兜底
+      if (/^(test_.*|.*_test)\.py$/.test(base) || /\.py$/.test(base) && testDirs.includes(f.split('/')[0])) { targets.add(f); continue }
+      // 源文件 → 同名测试（test_<module>.py / <module>_test.py，任意层级）；找不到 → 全量兜底
       if (/\.py$/.test(base)) {
-        const guess = testDirs.map(d => `${d}/test_${base.replace(/\.py$/, '')}.py`)
-        const found = guess.find(g => fs.existsSync(path.join(projectRoot, g)))
+        const stem = base.replace(/\.py$/, '')
+        const found = testIndex.get(`test_${stem}.py`) || testIndex.get(`${stem}_test.py`)
         if (found) targets.add(found); else return null
       } else return null // 配置/数据类改动影响面不可靠 → 全量
     }
@@ -326,7 +387,12 @@ function spawnFailure(r) {
  *         skipDirtyCheck=true 时即使有脏标记也当作"没改过"跳过（供外部显式调度）。 */
 export function runGate(projectRoot, { skipDirtyCheck = false, force = false } = {}) {
   const st = stateFor(projectRoot)
-  const R = (decision, reason, extra = {}) => ({ decision, reason, ...extra })
+  let nsWarnings = []
+  const R = (decision, reason, extra = {}) => ({
+    decision, reason, ...extra,
+    // 命名空间警告随所有判定结果返回（去重、不拦截；TEST_GATE_NS=0 时为空）
+    ...(nsWarnings.length ? { nsWarnings } : {}),
+  })
   const clearMarker = () => { try { fs.unlinkSync(st.markerPath) } catch {} }
   const keepMarker = () => { /* unevaluated：保留脏标记，下回合继续尝试把关 */ }
 
@@ -367,10 +433,12 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
     try { fs.unlinkSync(st.baselinePath) } catch {}
   }
 
-  // 读取本回合脏文件（供 TIA 选择性跑测 + 改动面分类）
+  // 读取本回合脏文件（供 TIA 选择性跑测 + 改动面分类 + 命名空间汇总）
   const dirtyFiles = (() => {
     try { return [...new Set(fs.readFileSync(st.markerPath, 'utf8').trim().split('\n').filter(Boolean))] } catch { return [] }
   })()
+  nsWarnings = [...new Set(dirtyFiles.map(checkNamespace).filter(Boolean))]
+  if (nsWarnings.length) log(st, `命名空间警告 ${nsWarnings.length} 条：${nsWarnings.map(w => w.code).join(',')}`)
 
   // TIA：pytest/go 能把脏文件映射到测试目标；映射不全 → 安全侧全量（只多跑不漏跑）
   let testStep = plan.test

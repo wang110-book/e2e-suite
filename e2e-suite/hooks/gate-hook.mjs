@@ -16,7 +16,13 @@ const st = stateFor(projectRoot)
 
 if (event === 'PostToolUse') {
   const fp = input?.tool_input?.file_path || input?.tool_input?.notebook_path || ''
-  if (fp) markEdit(projectRoot, fp)
+  if (fp) {
+    const r = markEdit(projectRoot, fp)
+    // 写时提醒：测试文件放错位置/命名不符发现规则时立刻反馈（不拦截，STDERR 供 agent 看到）
+    if (r?.nsWarning) {
+      process.stderr.write(`[test-gate][namespace] ${r.nsWarning.msg}\n  → ${r.nsWarning.fix}\n`)
+    }
+  }
   process.exit(0)
 }
 
@@ -28,6 +34,9 @@ if (event === 'Stop') {
   }
   const r = runGate(projectRoot, {})
   for (const m of r.messages || []) process.stderr.write(`[test-gate] ${m}\n`)
+  for (const w of r.nsWarnings || []) {
+    process.stderr.write(`[test-gate][namespace] ${w.msg}\n  → ${w.fix}\n`)
+  }
   if (r.tail) process.stderr.write(r.tail + '\n')
   if (r.decision === 'block') { log(st, `打回 reason=${r.reason}`); process.exit(2) }
   // unevaluated：无法评估（超时/工具缺失/输出不可解析）——不卡会话，但必须显式告警，

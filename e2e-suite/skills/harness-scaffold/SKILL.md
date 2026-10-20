@@ -22,6 +22,9 @@ description: 为被测项目生成"可门禁、可复现、可还原"的测试�
 
 ## 蓝图：八模块（项目无关的职责边界）
 
+> 生成前先读 [test-namespace 规范](references/test-namespace.md)：测试文件放 `tests/<层级>/`
+> （unit/api/e2e/ui），命名按各语言绑定表——写错位置的文件 runner 不会发现，等于没写。
+
 生成时按语言栈选实现，但职责边界不变。参考实现见某 Windows 透明代理项目（Node/PowerShell 栈）的 `tests/harness/`。
 
 | 模块 | 职责 | 通用性 | 关键坑注记（实测踩过的） |

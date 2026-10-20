@@ -254,6 +254,77 @@ test('family：真实仓库能发现成员且 e2e-env-setup 被排除', () => {
   assert.ok(plan.indexOf('report-render') > plan.indexOf('visual-regression'), 'report 必须在 assert 之后')
 })
 
+test('命名空间：规范内放行，规范外与不可发现命名各一条警告', () => {
+  const cases = [
+    ['tests/unit/parser.test.mjs', null],
+    ['tests/api/settings.test.js', null],
+    ['tests/unit/test_parser.py', null],
+    ['tests/harness/ctl.mjs', null],
+    ['tests/testdata/sample.json', null],
+    ['pkg/module_test.go', null],
+    ['src/lib.rs', null],
+    ['src/parser.test.mjs', 'test-outside-namespace'],
+    ['spec_old/thing.spec.js', 'test-outside-namespace'],
+    ['tests/unit/parser.js', 'test-will-not-be-discovered'],
+    ['tests/helpers.py', 'test-will-not-be-discovered'],
+  ]
+  for (const [rel, expected] of cases) {
+    const w = CORE.checkNamespace(rel)
+    assert.equal(w?.code ?? null, expected, `${rel} 期望 ${expected}，实际 ${w?.code ?? 'null'}`)
+  }
+})
+
+test('命名空间警告随门禁结果返回，且不影响判定', () => {
+  const dir = npmProject(green(), { 'tests/unit/loose.js': 'export const x = 1\n' })
+  try {
+    CORE.markEdit(dir, 'tests/unit/loose.js')
+    const r = CORE.runGate(dir, {})
+    assert.equal(r.decision, 'pass', '警告不得改变判定')
+    assert.ok(Array.isArray(r.nsWarnings) && r.nsWarnings.length === 1, JSON.stringify(r.nsWarnings))
+    assert.equal(r.nsWarnings[0].code, 'test-will-not-be-discovered')
+  } finally { cleanup(dir) }
+})
+
+test('TEST_GATE_NS=0 可关闭命名空间检查', () => {
+  const prev = process.env.TEST_GATE_NS
+  process.env.TEST_GATE_NS = '0'
+  try {
+    assert.equal(CORE.checkNamespace('src/parser.test.mjs'), null)
+  } finally {
+    if (prev === undefined) delete process.env.TEST_GATE_NS
+    else process.env.TEST_GATE_NS = prev
+  }
+})
+
+test('markEdit 对规范外测试文件返回写时警告', () => {
+  const dir = tmpProject({ 'package.json': '{}' })
+  try {
+    assert.equal(CORE.markEdit(dir, 'src/a.test.mjs').nsWarning?.code, 'test-outside-namespace')
+    assert.equal(CORE.markEdit(dir, 'tests/unit/a.test.mjs').nsWarning, null)
+  } finally { cleanup(dir) }
+})
+
+test('TIA：pytest 源文件映射到分层嵌套测试', () => {
+  const dir = tmpProject({
+    'pytest.ini': '[pytest]\n',
+    'tests/unit/test_alpha.py': 'def test_a():\n    assert True\n',
+    'tests/api/test_beta.py': 'def test_b():\n    assert True\n',
+    'src/alpha.py': 'x = 1\n',
+    'src/beta.py': 'y = 2\n',
+  })
+  try {
+    const plan = CORE.detect(dir)
+    assert.equal(plan.runner, 'pytest')
+    const sel = plan.select(dir, ['src/alpha.py'])
+    assert.ok(sel, '应能在嵌套层级里找到同名测试')
+    assert.ok(sel.args.includes('tests/unit/test_alpha.py'), JSON.stringify(sel.args))
+    const sel2 = plan.select(dir, ['src/beta.py'])
+    assert.ok(sel2.args.includes('tests/api/test_beta.py'), JSON.stringify(sel2.args))
+    // 找不到映射 → 全量兜底
+    assert.equal(plan.select(dir, ['src/unknown.py']), null)
+  } finally { cleanup(dir) }
+})
+
 test('版本号五处一致（不一致则客户端更新不到新版本）', async () => {
   const { spawnSync } = await import('node:child_process')
   const repoRoot = path.join(import.meta.dirname, '..')
