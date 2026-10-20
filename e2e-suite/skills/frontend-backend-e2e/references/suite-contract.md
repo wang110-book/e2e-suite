@@ -65,7 +65,7 @@
 
 ## 三点五、测试文件命名空间（v1.2.2 起）
 
-成员产出或修改测试文件时，一律遵循 [test-namespace 规范](../../harness-scaffold/references/test-namespace.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`）。
+成员产出或修改测试文件时，一律遵循 [test-namespace 技能](../../test-namespace/SKILL.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`）。
 
 **这不是风格偏好**：写在 runner 发现规则之外的测试文件永远不会被执行，而门禁会照常判定绿色——"假绿"由此产生。门禁在写时与收工两处给警告，不拦截。
 - **跨轮持久产物：金丝雀语料与进化日志**（`canary.md` / `evolution-log.md`）——种子经"缺陷修复→通用性筛选→种子化"闭环入库；家族自进化以"日志可回退"为前提，用户可随时否决回退。

@@ -15,7 +15,7 @@ wang110-book/e2e-suite
 
 | 组成 | 内容 |
 |---|---|
-| skills/（21 个） | 总控 frontend-backend-e2e + 17 个契约化家族成员（含 harness-scaffold 脚手架蓝图）+ 门禁 3 技能（gate-guide / gate-preflight / tdd-loop） |
+| skills/（22 个） | 总控 frontend-backend-e2e + 19 个契约化家族成员（含 test-namespace 命名空间、harness-scaffold 脚手架蓝图、gate-preflight / tdd-loop / test-case-design）+ gate-guide 门禁指南 + e2e-env-setup（detached，仅显式调用） |
 | hooks/ | Stop 收工把关：改完代码自动跑测试栈，基线全自动、抖动隔离、回归拦截 |
 | mcp/ | `test_gate_status` / `test_gate_run` / `test_gate_reset` + `family_skills`（家族发现与编排入口） |
 
@@ -25,7 +25,7 @@ wang110-book/e2e-suite
 marketplace.json           市场清单（github 源格式；.claude-plugin/ 下同步一份兼容）
 e2e-suite/                 唯一插件（一体化）
   ├─ .zcode-plugin/plugin.json   插件清单（声明 skills + hooks + mcpServers）
-  ├─ skills/<21 个技能>
+  ├─ skills/<22 个技能>
   ├─ lib/gate-core.mjs     平台无关判定引擎
   ├─ lib/gate-cli.mjs      任意宿主 CLI 入口
   ├─ lib/family.mjs        家族成员发现与 before/after 拓扑编排
@@ -83,16 +83,18 @@ zcode plugins update e2e-suite@e2e-suite   # 先刷新市场再拉新版本
 
 ### 测试文件命名空间（v1.2.2）
 
-写测试文件时遵循 [test-namespace 规范](e2e-suite/skills/harness-scaffold/references/test-namespace.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`、C++ 需注册进聚合目标）。
+写测试文件的放置与命名规范，作为独立技能 [test-namespace](e2e-suite/skills/test-namespace/SKILL.md) 交付（`description` 命中"新建/移动测试、测试没跑起来、审查测试树"即触发）：目录 `tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名（JS `*.test.*`、Python `test_*.py`、Go 同位置 `*_test.go`、C++ 需注册进聚合目标）。
 
 **为什么重要**：runner 只发现符合其命名规则的文件。写在规则之外的测试**永远不会执行**，而门禁照常判定绿色——这是"假绿"的主要来源。
 
-门禁在两处给警告（都不拦截，`TEST_GATE_NS=0` 可关）：
+门禁的自动提醒（都不拦截，`TEST_GATE_NS=0` 可关）：
 
 - **写时**：PostToolUse 检测到偏离立刻在 stderr 打 `[test-gate][namespace]`，agent 当轮就能改；
 - **收工**：Stop 判定结果的 `nsWarnings` 里带去重清单。
 
-两类：`test-outside-namespace`（测试文件在 tests/ 树外，Go/Rust 同位置惯例除外）、`test-will-not-be-discovered`（tests/ 树内但命名不符发现规则）。
+两类：`test-outside-namespace`（测试文件在 tests/ 树外，Go/Rust 同位置惯例除外）、`test-will-not-be-discovered`（tests/ 树内含测试声明但命名不符发现规则）。
+
+**只检测测试文件，不误报普通项目文件**：`tests/` 下的 `setup.js`、`mocks/*`、`factories/*`、`helpers.js` 这类非测试代码不会被打扰——判定靠**读文件内容**（有没有 `test(` / `def test_` / `#[test]` / `[Fact]` 等测试声明），不是只看路径。
 
 ## 非 ZCode 宿主 / CI 用法
 

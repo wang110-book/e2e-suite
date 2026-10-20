@@ -68,42 +68,87 @@ const CODE_EXT = new Set(['.c', '.cc', '.cpp', '.cxx', '.h', '.hpp', '.hxx', '.p
 const MANIFEST = new Set(['package.json', 'Cargo.toml', 'CMakeLists.txt', 'go.mod', 'pyproject.toml',
   'setup.py', 'requirements.txt', 'Makefile', 'meson.build', 'build.ninja'])
 
-// ── 测试文件命名空间（规范见 skills/harness-scaffold/references/test-namespace.md）──
+// ── 测试文件命名空间（规范见 skills/test-namespace/SKILL.md）──
 // 两类偏离，各一条警告（均不拦截；TEST_GATE_NS=0 整体关闭）：
 //   test-outside-namespace  —— 测试命名的文件写在 tests/ 树外（Go/Rust 惯例除外）
 //   test-will-not-be-discovered —— tests/ 树内的代码文件不匹配 runner 发现命名（假绿源头）
+//
+// 关键：路径不能区分"测试文件"与"放在 tests/ 下的普通项目文件"（setup/mocks/factories/
+// helpers 都是合法非测试文件）。因此必须看**内容**——只有真的含测试声明才判定为测试，
+// 否则一律放行，避免把正常项目文件误报成命名违规。
 const NS_ROOT = /^(tests?|spec|__tests__)\//i
-// 只有规范指定的共享/数据目录整树豁免；其余位置（含 tests/ 根下的 helpers.py）仍按发现规则检查
-const NS_EXEMPT = /^(tests?|spec|__tests__)\/(harness|testdata|fixtures)\//i
-// pytest 约定文件：在 tests/ 树内但不是用例，不算命名偏离
-const NS_PY_SPECIAL = /^(conftest\.py|__init__\.py|pytest\.ini)$/i
+const NS_EXEMPT = /^(tests?|spec|__tests__)\/(harness|testdata|fixtures|mocks|__mocks__|factories|__fixtures__)\//i
 const NS_TEST_JS = /\.(test|spec)\.[cm]?[jt]sx?$/i
 const NS_TEST_PY = /^test_.*\.py$|_test\.py$/i
 const NS_TEST_GO = /_test\.go$/i          // Go 惯例：与源码同目录，不算偏离
 const NS_TEST_CS = /Tests\.cs$/i
 const NS_TEST_CPP = /_?tests?\.(cpp|cc|cxx)$/i
 const NS_IMPL = /\.(m|c|cc|cpp|cxx|h|hpp|py|js|mjs|cjs|ts|tsx|jsx|go|cs|java|kt|rb|php|swift|scala)$/i
+// pytest 约定文件：在 tests/ 树内但不是用例，不算命名偏离
+const NS_PY_SPECIAL = /^(conftest\.py|__init__\.py|pytest\.ini)$/i
 
-export function checkNamespace(rel) {
+// 测试声明特征（按语言）。只认"定义了一条测试"的构造，不认 assert/expect 的单纯 import，
+// 否则把用断言库的普通模块也误判成测试。
+const TEST_SIGNATURES = {
+  js: /(^|[^.\w])(test|it|describe|suite)(\.(only|skip|each|concurrent))?\s*\(/m,
+  py: /^\s*(def\s+test_\w+|class\s+Test\w*)/m,
+  go: /^func\s+(Test|Benchmark|Fuzz)\w*\s*\(/m,
+  cs: /^\s*\[(Test|Fact|Theory|TestMethod|TestCase)\b/m,
+  cpp: /^\s*(TEST|TEST_F|TEST_P|TYPED_TEST|BOOST_AUTO_TEST_CASE)\s*\(/m,
+  rs: /#\[(test|tokio::test)\]/,
+  java: /^\s*@(Test|ParameterizedTest|RepeatedTest)\b/m,
+}
+function looksLikeTestContent(text, base) {
+  if (!text) return false
+  const sample = text.slice(0, 65536)          // 只看前 64KB，避免大文件开销
+  if (/\.(py)$/i.test(base)) return TEST_SIGNATURES.py.test(sample)
+  if (/\.go$/i.test(base)) return TEST_SIGNATURES.go.test(sample)
+  if (/\.cs$/i.test(base)) return TEST_SIGNATURES.cs.test(sample)
+  if (/\.(cpp|cc|cxx)$/i.test(base)) return TEST_SIGNATURES.cpp.test(sample)
+  if (/\.rs$/i.test(base)) return TEST_SIGNATURES.rs.test(sample)
+  if (/\.(java|kt)$/i.test(base)) return TEST_SIGNATURES.java.test(sample)
+  return TEST_SIGNATURES.js.test(sample)
+}
+
+/**
+ * @param {string} rel 项目内相对路径
+ * @param {{content?:string}} [opts] 文件内容。提供时做内容判定（准确）；
+ *   省略时仅对"文件名本身已强烈表明是测试"的路径告警，其余一律放行（宁可漏报不误报）。
+ */
+export function checkNamespace(rel, opts = {}) {
   if (process.env.TEST_GATE_NS === '0') return null
   const r = rel.replace(/\\/g, '/')
-  if (/(^|\/)(vendor|node_modules)\//.test(r)) return null
+  if (/(^|\/)(vendor|node_modules|dist|build|coverage)\//.test(r)) return null
   const base = r.split('/').pop() || ''
   if (NS_PY_SPECIAL.test(base)) return null
   if (NS_TEST_GO.test(base)) return null                    // Go 同位置惯例
-  if (/\.rs$/i.test(base)) return null                        // Rust：src 内 #[cfg(test)] 与 tests/*.rs 都是正典
-  const looksTest = NS_TEST_JS.test(base) || NS_TEST_PY.test(base) || NS_TEST_CS.test(base) || NS_TEST_CPP.test(base)
-  if (looksTest && !NS_ROOT.test(r)) {
+  if (/\.rs$/i.test(base)) return null                       // Rust：src 内 #[cfg(test)] 与 tests/*.rs 都是正典
+
+  const namedTest = NS_TEST_JS.test(base) || NS_TEST_PY.test(base) || NS_TEST_CS.test(base) || NS_TEST_CPP.test(base)
+  const hasContent = typeof opts.content === 'string'
+  // 内容可用时以内容为准；否则只用"命名已明确"这一强信号，不做 tests/ 树内的猜测
+  const isTest = hasContent ? looksLikeTestContent(opts.content, base) : namedTest
+
+  if (namedTest && !NS_ROOT.test(r) && isTest) {
     return { code: 'test-outside-namespace', file: r,
-      msg: `测试命名的文件在 tests/ 命名空间之外：${r}（Go/Rust 同位置惯例除外）`,
-      fix: '建议移到 tests/<层级>/，命名按 test-namespace 规范（unit/api/e2e/ui 四层）' }
+      msg: `测试文件在 tests/ 命名空间之外：${r}（Go/Rust 同位置惯例除外）`,
+      fix: '按 test-namespace 技能（e2e-suite:test-namespace）放置：移到 tests/<层级>/，层级选 unit/api/e2e/ui' }
   }
-  if (NS_ROOT.test(r) && !NS_EXEMPT.test(r) && !looksTest && NS_IMPL.test(base)) {
+  if (NS_ROOT.test(r) && !NS_EXEMPT.test(r) && !namedTest && isTest) {
     return { code: 'test-will-not-be-discovered', file: r,
-      msg: `tests/ 树内的代码文件不匹配 runner 的测试发现命名：${r}——若它是测试，永远不会被执行（假绿）`,
-      fix: '是测试→改名为 test_*.py / *.test.*；是共享代码→移到 tests/harness/ 或 tests/testdata/' }
+      msg: `tests/ 树内的文件含测试声明但命名不匹配 runner 发现规则：${r}——它永远不会被执行（假绿）`,
+      fix: '按 test-namespace 技能改名：JS 用 *.test.*、Python 用 test_*.py；若它不是测试（mock/工厂/辅助），移到 tests/mocks、tests/factories 或 tests/harness/' }
   }
   return null
+}
+
+// 读文件内容供内容判定（读不到返回 null → 调用方退回路径判定）
+function readSample(abs) {
+  try {
+    const st = fs.statSync(abs)
+    if (!st.isFile() || st.size > 2 * 1024 * 1024) return null
+    return fs.readFileSync(abs, 'utf8')
+  } catch { return null }
 }
 
 export function isCodePath(rel) {
@@ -125,8 +170,13 @@ export function markEdit(projectRoot, filePath) {
     fs.mkdirSync(st.stateDir, { recursive: true })
     fs.appendFileSync(st.markerPath, rel + '\n')
   }
-  // 写时命名空间校验：agent 刚把测试写到规范外的那一刻就有反馈（比 Stop 收工才提醒早一轮）
-  return { marked: true, nsWarning: inside ? checkNamespace(rel) : null }
+  // 写时命名空间校验：读刚写完的文件内容做判定（路径不足以区分测试与普通文件）
+  let nsWarning = null
+  if (inside) {
+    const content = readSample(abs)
+    nsWarning = content === null ? checkNamespace(rel) : checkNamespace(rel, { content })
+  }
+  return { marked: true, nsWarning }
 }
 
 // ── 失败名解析（各运行器输出格式不同，不能共用 jest 的符号行）───────────────
@@ -437,7 +487,10 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
   const dirtyFiles = (() => {
     try { return [...new Set(fs.readFileSync(st.markerPath, 'utf8').trim().split('\n').filter(Boolean))] } catch { return [] }
   })()
-  nsWarnings = [...new Set(dirtyFiles.map(checkNamespace).filter(Boolean))]
+  nsWarnings = [...new Set(dirtyFiles.map(f => {
+    const content = readSample(path.join(projectRoot, f))
+    return content === null ? checkNamespace(f) : checkNamespace(f, { content })
+  }).filter(Boolean))]
   if (nsWarnings.length) log(st, `命名空间警告 ${nsWarnings.length} 条：${nsWarnings.map(w => w.code).join(',')}`)
 
   // TIA：pytest/go 能把脏文件映射到测试目标；映射不全 → 安全侧全量（只多跑不漏跑）

@@ -254,8 +254,9 @@ test('family：真实仓库能发现成员且 e2e-env-setup 被排除', () => {
   assert.ok(plan.indexOf('report-render') > plan.indexOf('visual-regression'), 'report 必须在 assert 之后')
 })
 
-test('命名空间：规范内放行，规范外与不可发现命名各一条警告', () => {
+test('命名空间：路径判定（无内容时只认强信号，不误报普通文件）', () => {
   const cases = [
+    // 规范内
     ['tests/unit/parser.test.mjs', null],
     ['tests/api/settings.test.js', null],
     ['tests/unit/test_parser.py', null],
@@ -263,10 +264,17 @@ test('命名空间：规范内放行，规范外与不可发现命名各一条�
     ['tests/testdata/sample.json', null],
     ['pkg/module_test.go', null],
     ['src/lib.rs', null],
+    ['tests/conftest.py', null],
+    // 普通项目文件——绝不能误报
+    ['src/parser.js', null],
+    ['lib/config.ts', null],
+    ['tests/setup.js', null],
+    ['tests/mocks/api.js', null],
+    ['tests/factories/user.js', null],
+    ['tests/unit/helpers.js', null],
+    // 真正的偏离
     ['src/parser.test.mjs', 'test-outside-namespace'],
     ['spec_old/thing.spec.js', 'test-outside-namespace'],
-    ['tests/unit/parser.js', 'test-will-not-be-discovered'],
-    ['tests/helpers.py', 'test-will-not-be-discovered'],
   ]
   for (const [rel, expected] of cases) {
     const w = CORE.checkNamespace(rel)
@@ -274,8 +282,24 @@ test('命名空间：规范内放行，规范外与不可发现命名各一条�
   }
 })
 
+test('命名空间：内容判定区分测试与普通文件', () => {
+  const t = (rel, content) => CORE.checkNamespace(rel, { content })?.code ?? null
+  // tests/ 下含测试声明但命名不符 → 才是假绿风险
+  assert.equal(t('tests/unit/parser.js', "import test from 'node:test'\ntest('x', () => {})\n"), 'test-will-not-be-discovered')
+  assert.equal(t('tests/helpers.py', 'def test_x():\n    assert True\n'), 'test-will-not-be-discovered')
+  assert.equal(t('tests/helpers.py', 'def helper():\n    return 1\n'), null, '普通辅助代码不得误报')
+  assert.equal(t('tests/setup.js', 'export const setup = () => {}\n'), null, 'setup 不得误报')
+  assert.equal(t('tests/mocks/api.js', 'export const mockApi = {}\n'), null, 'mock 不得误报')
+  // tests/ 外、命名像测试、内容也是测试 → 偏离
+  assert.equal(t('src/parser.test.mjs', "test('a', () => {})\n"), 'test-outside-namespace')
+  // tests/ 外、命名像测试但内容不是测试（如文档示例） → 不报
+  assert.equal(t('src/parser.test.mjs', 'export const x = 1\n'), null, '命名像测试但无测试声明时不报')
+})
+
 test('命名空间警告随门禁结果返回，且不影响判定', () => {
-  const dir = npmProject(green(), { 'tests/unit/loose.js': 'export const x = 1\n' })
+  const dir = npmProject(green(), {
+    'tests/unit/loose.js': "import test from 'node:test'\ntest('loose case', () => {})\n",
+  })
   try {
     CORE.markEdit(dir, 'tests/unit/loose.js')
     const r = CORE.runGate(dir, {})

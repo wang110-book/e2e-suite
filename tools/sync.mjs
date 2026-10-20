@@ -25,7 +25,7 @@ const FAMILY_SKILLS = [
   'api-contract-diff', 'blackbox-e2e-test', 'canary-bootstrap', 'canary-calibration',
   'e2e-env-setup', 'frontend-backend-e2e', 'harness-scaffold', 'negative-path-test',
   'perf-probe', 'persistence-boundary-test', 'report-render', 'streaming-channel-test',
-  'test-case-design', 'tool-config-guide', 'ux-acceptance-test', 'visual-design-review',
+  'test-case-design', 'test-namespace', 'tool-config-guide', 'ux-acceptance-test', 'visual-design-review',
   'visual-regression', 'whitebox-suite',
 ];
 // 门禁自带技能（住在插件市场源，不在 ~/.zcode/skills）

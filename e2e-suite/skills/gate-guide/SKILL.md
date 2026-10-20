@@ -45,14 +45,14 @@ description: 测试门禁（test-gate）使用与恢复指南。当被 [test-gat
 
 ## 测试文件命名空间（v1.2.2 起）
 
-写测试文件时遵循 [test-namespace 规范](../harness-scaffold/references/test-namespace.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名。**写在 runner 发现规则之外的文件永不执行**，门禁会照常绿——这是假绿的头号来源。
+写测试文件时遵循 [test-namespace 技能](../test-namespace/SKILL.md)：`tests/<层级>/`（unit/api/e2e/ui）+ 各语言镜像命名。**写在 runner 发现规则之外的文件永不执行**，门禁会照常绿——这是假绿的头号来源。
 
 门禁在两种时机给出命名空间警告（都不拦截，`TEST_GATE_NS=0` 可关）：
 
 - **写时**（PostToolUse）：你刚把测试写到规范外，立刻在 stderr 看到 `[test-gate][namespace]`；
 - **收工**（Stop）：判定结果的 `nsWarnings` 里带本回合去重后的清单。
 
-两类警告：`test-outside-namespace`（测试命名的文件在 tests/ 树外，Go/Rust 同位置惯例除外）、`test-will-not-be-discovered`（tests/ 树内但命名不匹配发现规则）。
+两类警告：`test-outside-namespace`（测试命名的文件在 tests/ 树外，Go/Rust 同位置惯例除外）、`test-will-not-be-discovered`（tests/ 树内含测试声明但命名不匹配发现规则）。**门禁只检测测试文件**——判定靠读内容有没有测试声明，`tests/` 下的 setup/mocks/factories/helpers 等普通代码不误报。
 
 ## 栈检测范围（自动，零配置）
 
