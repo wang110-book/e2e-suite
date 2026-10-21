@@ -22,11 +22,14 @@
 | phase | 职责 | 当前成员 |
 |---|---|---|
 | `env` | 环境准备：版本确认/配置开关/观测预置/凭据与样例数据/备份还原/清理核验/**门禁体检/测试栈脚手架** | gate-preflight（e2e-suite 插件内，联动开跑先过 unit 闸） · harness-scaffold（项目无测试栈时按蓝图造脚手架，gate 随后自动纳入） · tool-config-guide（本机） |
-| `design` | 测试集设计：用例矩阵/用例卡片/分级回归圈定 | test-case-design |
+| `design` | 测试集设计：用例矩阵/用例卡片/分级回归圈定/**测试文件放置与命名** | test-case-design · test-namespace |
 | `exec` | 测试执行：GUI 自动化/接口驱动/黑盒操作 | blackbox-e2e-test（功能侧） · negative-path-test · persistence-boundary-test · ux-acceptance-test（需求侧） · visual-design-review（视觉设计） · streaming-channel-test（流式/异步通道） |
 | `assert` | 独立断言/校验器：契约比对/回归比对 | api-contract-diff · visual-regression |
 | `report` | 报告渲染/汇总 | report-render |
-| `custom` | 其他：性能探针/安全扫描/数据工厂 | whitebox-suite · perf-probe（性能基线+并发冲击） · canary-calibration（元验证+自进化） · platform-setup（分支测试平台，预留可选） |
+| `custom` | 其他：性能探针/安全扫描/数据工厂/实现纪律 | whitebox-suite · perf-probe（性能基线+并发冲击） · canary-calibration（元验证+自进化） · tdd-loop（Red-Green-Refactor 实现纪律） · canary-bootstrap（一次性临时成员，完成任务即自脱离） |
+
+> 表中只列**在册**成员。`e2e-env-setup` 处于 detached 状态（契约块已改名，不入列，仅显式调用）；
+> 表中未列出的名字即尚未实现，不要在计划里引用。
 
 ## 生态对照与取舍（2026-08 调研：QASkills.sh 448 技能 / anthropics/skills / agentskills 社区包）
 

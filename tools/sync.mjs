@@ -2,10 +2,13 @@
 // sync.mjs — 本机运行时 → 本仓库（维护者日常开发后同步改动）
 //
 // 数据源（2026-10-18 改版：旧 dev-default-plugins 市场已删除，本工具曾整体静默失效）：
-//   1) ~/.zcode/skills/<家族技能>            ——install 部署的运行时副本
-//   2) 已安装插件缓存 e2e-suite@e2e-suite    ——读 installed_plugins.json 的 installPath，
-//      版本目录变化自动跟随，不再写死路径
+//   已安装插件缓存 e2e-suite@e2e-suite —— 读 installed_plugins.json 的 installPath，
+//   版本目录变化自动跟随，不再写死路径。
 // 方向：运行时较新 → 回灌仓库；仓库权威件（plugin.json / mcp / 清单）永不反向覆盖。
+//
+// 为什么不读 ~/.zcode/skills/：插件整包自带全部技能，用户级副本是旧版 install 的遗留
+// （现需 --legacy-skills 才写）。把它当数据源会把旧副本回灌进仓库，覆盖插件里较新的实现。
+// 仅当 ~/.zcode/skills/ 下存在、且插件缓存不可用时，才退回读它（见 FALLBACK_SKILLS）。
 //
 // 安全阀：默认**只报告差异不写入**——本机运行时常常落后于仓库，盲目回灌会把仓库里
 // 刚改的实现静默覆盖。确认运行时才是较新的一方后，加 --force 才真正覆盖。
@@ -67,21 +70,23 @@ function copyTree(src, dst) {
 }
 
 let changed = 0;
-for (const s of FAMILY_SKILLS) {
-  const src = path.join(ZCODE, 'skills', s);
-  if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（~/.zcode/skills 下不存在）`); continue; }
-  const n = copyTree(src, path.join(PKG_DST, 'skills', s));
-  if (n) { console.log(`SYNC  ${s}（${n} 个文件有差异）`); changed += n; }
-}
 if (!PLUGIN_SRC) {
-  console.log('SKIP  门禁部分（未找到 e2e-suite 已安装缓存；跑 install 或经市场安装后才有）');
+  // 退回路径：插件缓存不可用时，才把 ~/.zcode/skills 当数据源（旧宿主/旧安装遗留）
+  console.log('（未找到插件缓存，退回 ~/.zcode/skills 作为技能数据源）');
+  for (const s of FAMILY_SKILLS) {
+    const src = path.join(ZCODE, 'skills', s);
+    if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（~/.zcode/skills 下不存在）`); continue; }
+    const n = copyTree(src, path.join(PKG_DST, 'skills', s));
+    if (n) { console.log(`SYNC  ${s}（${n} 个文件有差异）`); changed += n; }
+  }
 } else {
-  console.log(`（门禁数据源：${PLUGIN_SRC}）`);
-  for (const s of GATE_SKILLS) {
+  console.log(`（数据源：${PLUGIN_SRC}）`);
+  // 插件缓存是整包权威源：家族技能与门禁技能一并从它回灌，不再混用用户级副本
+  for (const s of [...FAMILY_SKILLS, ...GATE_SKILLS]) {
     const src = path.join(PLUGIN_SRC, 'skills', s);
     if (!fs.existsSync(src)) { console.log(`SKIP  ${s}（插件缓存中不存在）`); continue; }
     const n = copyTree(src, path.join(PKG_DST, 'skills', s));
-    if (n) { console.log(`SYNC  gate:${s}（${n}）`); changed += n; }
+    if (n) { console.log(`SYNC  ${s}（${n}）`); changed += n; }
   }
   // 引擎与薄壳：只同步 lib/hooks。
   // mcp/、.zcode-plugin/、.mcp.json 不回灌——插件清单与 MCP 以仓库为权威

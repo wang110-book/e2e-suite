@@ -72,4 +72,4 @@ assert 完成后，把本轮缺陷清单与金丝雀语料交给金丝雀成员�
 - `data-factory`（phase=custom，before: exec）：大规模测试数据工厂；
 - `platform-setup`（phase=custom，分支测试平台，可选）：被测系统执行平台/分支测试环境配置，由用户后续单独编写；接入后 whitebox-suite 的隔离平台项生效。
 
-> 已存在的成员勿在此列：`test-case-design`（design）、`streaming-channel-test`（exec，SSE/异步通道）、`perf-probe`（custom，性能基线+并发冲击）、`canary-calibration`（custom，元验证+自进化）、`api-contract-diff`（assert）、`report-render`（report）均带契约块在列，发现机制自动编排；槽位现状以 suite-contract.md 的阶段表为准。
+> 已存在的成员勿在此列：`test-case-design`（design）、`test-namespace`（design，测试文件放置与命名）、`streaming-channel-test`（exec，SSE/异步通道）、`perf-probe`（custom，性能基线+并发冲击）、`canary-calibration`（custom，元验证+自进化）、`canary-bootstrap`（custom，一次性临时成员，完成即自脱离）、`tdd-loop`（custom，实现纪律）、`api-contract-diff`（assert）、`report-render`（report）均带契约块在列，发现机制自动编排；槽位现状以 suite-contract.md 的阶段表为准。

@@ -18,7 +18,7 @@
           {
             "type": "command",
             "command": "node \"${ZCODE_PLUGIN_ROOT}/hooks/gate-hook.mjs\"",
-            "timeout": 900
+            "timeout": 1200
           }
         ]
       }

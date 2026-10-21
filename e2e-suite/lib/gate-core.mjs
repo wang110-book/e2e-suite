@@ -151,6 +151,12 @@ function readSample(abs) {
   } catch { return null }
 }
 
+// 写时提示只对可能含测试声明的文本源码读内容——图片/压缩包/大文档不必整份读进内存
+function readSampleIfSource(abs) {
+  if (!NS_IMPL.test(path.extname(abs))) return null
+  return readSample(abs)
+}
+
 export function isCodePath(rel) {
   const r = rel.replace(/\\/g, '/')
   const base = r.split('/').pop() || ''
@@ -173,7 +179,7 @@ export function markEdit(projectRoot, filePath) {
   // 写时命名空间校验：读刚写完的文件内容做判定（路径不足以区分测试与普通文件）
   let nsWarning = null
   if (inside) {
-    const content = readSample(abs)
+    const content = readSampleIfSource(abs)
     nsWarning = content === null ? checkNamespace(rel) : checkNamespace(rel, { content })
   }
   return { marked: true, nsWarning }
@@ -188,13 +194,15 @@ function parseJest(out) {
   const names = [...out.matchAll(/^\s*(?:✕|×|✗|✖)\s+(.+)$/gm)].map(m => cleanName(m[1]))
   return names.filter(n => n && !/^failing tests?:?$/i.test(n)).map(n => ({ name: n }))
 }
+// pytest：`FAILED tests/test_a.py::test_a - assert 1 == 2`
+// name 只取 file::test（稳定标识），断言消息单独放 message——消息里的数值/环境
+// 每次都可能变，混进 name 会让同一条既有红被判成"新增失败"。
 function parsePytest(out) {
   const seen = new Set()
   const rows = []
   for (const m of out.matchAll(/^FAILED\s+(\S+)(?:\s+-\s+(.*))?$/gm)) {
-    const file = m[1]
-    const name = m[2] ? `${file} - ${m[2]}` : file
-    if (!seen.has(name)) { seen.add(name); rows.push({ name, file }) }
+    const name = m[1]
+    if (!seen.has(name)) { seen.add(name); rows.push({ name, file: m[1], ...(m[2] ? { message: m[2] } : {}) }) }
   }
   return rows
 }
@@ -431,11 +439,22 @@ function spawnFailure(r) {
   return { kind: 'spawn-error', message: `${code || 'unknown'}: ${r.error.message || r.error}` }
 }
 
+// 脏标记的兜底信号：PostToolUse 只覆盖 Edit/Write，Bash/sed/代码生成器改的文件不会记脏。
+// 无标记时看 git 工作区是否干净——非 git 仓库/无 git 时返回 false（退回原行为，不误判）。
+// 环境变量 TEST_GATE_GIT_CHECK=0 可关闭。
+function gitDirty(projectRoot) {
+  if (process.env.TEST_GATE_GIT_CHECK === '0') return false
+  const r = spawnSync('git', ['status', '--porcelain', '--untracked-files=no'],
+    { cwd: projectRoot, encoding: 'utf8', timeout: 10_000, windowsHide: true })
+  if (r.error || r.status !== 0) return false
+  return !!(r.stdout || '').trim()
+}
+
 /** 完整门禁判定。返回 { decision:'pass'|'block'|'unevaluated', reason, runner, failing?, fresh?, messages[], tail? }
- *  副作用（状态转移）：立基线/清基线/绿史/清脏标记。
- *  @param {{force?:boolean, skipDirtyCheck?:boolean}} opts  force=忽略脏标记直接跑；
- *         skipDirtyCheck=true 时即使有脏标记也当作"没改过"跳过（供外部显式调度）。 */
-export function runGate(projectRoot, { skipDirtyCheck = false, force = false } = {}) {
+ *  @param {{force?:boolean, skipDirtyCheck?:boolean, plan?:object}} opts  force=忽略脏标记直接跑；
+ *         skipDirtyCheck=true 时即使有脏标记也当作"没改过"跳过（供外部显式调度）；
+ *         plan=注入判定计划（测试用接缝，省略则按项目自动 detect）。 */
+export function runGate(projectRoot, { skipDirtyCheck = false, force = false, plan: injectedPlan } = {}) {
   const st = stateFor(projectRoot)
   let nsWarnings = []
   const R = (decision, reason, extra = {}) => ({
@@ -444,11 +463,12 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
     ...(nsWarnings.length ? { nsWarnings } : {}),
   })
   const clearMarker = () => { try { fs.unlinkSync(st.markerPath) } catch {} }
-  const keepMarker = () => { /* unevaluated：保留脏标记，下回合继续尝试把关 */ }
 
   if (skipDirtyCheck) return R('pass', 'skip-dirty-check')
-  if (!force && !fs.existsSync(st.markerPath)) return R('pass', 'clean-turn')
-  const plan = detect(projectRoot)
+  // 脏标记是主信号；但它只由 PostToolUse(Edit|Write) 写入——Bash/sed/生成器改的文件
+  // 不会记脏。因此无标记时再看一眼 git 工作区，避免把"外部写入"误判成 clean-turn。
+  if (!force && !fs.existsSync(st.markerPath) && !gitDirty(projectRoot)) return R('pass', 'clean-turn')
+  const plan = injectedPlan || detect(projectRoot)
   if (!plan) { clearMarker(); return R('pass', 'no-test-stack') }
   log(st, `${force ? 'RUN' : 'STOP'} 门禁启动 runner=${plan.runner} root=${projectRoot}`)
 
@@ -465,16 +485,15 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
       const tail = ((r.stderr || '') + (r.stdout || '')).slice(-3000)
       // 首红登记、之后打回——与测试基线同一生命周期。原实现"首放"但从不登记，
       // 导致构建永远失败的项目每回合都命中"首次"分支、永久放行。
+      // 脏标记保留：构建红不因"本回合没再改文件"而变成 clean-turn 放行。
       if (!base0) {
         saveBaseline(st, projectRoot, { failing: [], buildOnly: true, signature: sig(String(r.status)) })
-        clearMarker()
         log(st, '构建失败（首红）— 登记构建基线并放行一次，后续构建失败将打回')
         return R('pass', 'build-failed-first', { runner: plan.runner,
           messages: ['构建失败（首次）已登记为已知状态；再次构建失败将打回，修复后基线自动清除'],
           tail })
       }
       log(st, '构建失败 — 打回')
-      clearMarker()
       return R('block', 'build-failed', { runner: plan.runner, tail })
     }
   }
@@ -488,7 +507,7 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
     try { return [...new Set(fs.readFileSync(st.markerPath, 'utf8').trim().split('\n').filter(Boolean))] } catch { return [] }
   })()
   nsWarnings = [...new Set(dirtyFiles.map(f => {
-    const content = readSample(path.join(projectRoot, f))
+    const content = readSampleIfSource(path.join(projectRoot, f))
     return content === null ? checkNamespace(f) : checkNamespace(f, { content })
   }).filter(Boolean))]
   if (nsWarnings.length) log(st, `命名空间警告 ${nsWarnings.length} 条：${nsWarnings.map(w => w.code).join(',')}`)
@@ -503,20 +522,41 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
     log(st, `TIA 选择跑测：${selected.note}`)
   }
 
-  const t = runStep(projectRoot, testStep)
-  const tFail = spawnFailure(t)
+  let t = runStep(projectRoot, testStep)
+  let tFail = spawnFailure(t)
   if (tFail) {
     log(st, `测试命令不可用(${plan.test.cmd}): ${tFail.message} — unevaluated`)
     return R('unevaluated', 'test-tool-missing', { runner: plan.runner,
       messages: [`测试命令不可用（${tFail.message}），本次无法评估测试状态`] })
   }
-  const out = (t.stdout || '') + (t.stderr || '')
-  const parsed = plan.parse ? plan.parse(out) : []
-  const names = parsed.map(x => x.name)
-  const failedCount = plan.failCount ? plan.failCount(out) : null
-  // 解析不全（有失败数但名字数对不上）→ 不能拿不完整的名字集做基线比对
-  const parseIncomplete = failedCount !== null && failedCount > names.length
+  let out = (t.stdout || '') + (t.stderr || '')
+  let parsed = plan.parse ? plan.parse(out) : []
+  let names = parsed.map(x => x.name)
+  let failedCount = plan.failCount ? plan.failCount(out) : null
+  let parseIncomplete = failedCount !== null && failedCount > names.length
   const q = loadQuarantine(st)
+
+  // 子集红 + 没有完整基线 → 子集结果不足以立基线（未跑的用例状态未知）。
+  // 退回全量跑测，用完整红盘建基线——否则下一轮跑到别的模块时，既有红会被判成新增。
+  const baseBefore = loadBaseline(st)
+  const needFullForBaseline = selection && t.status !== 0 && (!baseBefore || baseBefore.partial)
+  if (needFullForBaseline) {
+    log(st, 'TIA 子集为红且基线不完整 — 退回全量跑测以建立完整基线')
+    selection = null
+    testStep = plan.test
+    t = runStep(projectRoot, testStep)
+    tFail = spawnFailure(t)
+    if (tFail) {
+      log(st, `全量跑测无法执行(${tFail.message}) — unevaluated`)
+      return R('unevaluated', 'test-tool-missing', { runner: plan.runner,
+        messages: [`全量跑测无法执行（${tFail.message}），本次无法评估测试状态`] })
+    }
+    out = (t.stdout || '') + (t.stderr || '')
+    parsed = plan.parse ? plan.parse(out) : []
+    names = parsed.map(x => x.name)
+    failedCount = plan.failCount ? plan.failCount(out) : null
+    parseIncomplete = failedCount !== null && failedCount > names.length
+  }
 
   // 全绿
   if (t.status === 0) {
@@ -584,11 +624,23 @@ export function runGate(projectRoot, { skipDirtyCheck = false, force = false } =
         messages: ['本仓库曾全绿，现失败（回归）。TEST_GATE_RESET=1 或 reset 工具可重新宽容'],
         tail: out.slice(-3000) })
     }
-    saveBaseline(st, projectRoot, { failing: names, signature: outSig, failedCount, partial: !!selection, scope: selection?.note })
+    // 全量跑测（needFullForBaseline 已在上面保证）→ 可安全建立完整基线
+    saveBaseline(st, projectRoot, { failing: names, signature: outSig, failedCount })
     clearMarker()
-    log(st, `基线登记：${names.length} 个已知失败 — 首放${selection ? `（子集：${selection.note}）` : ''}`)
+    log(st, `基线登记：${names.length} 个已知失败 — 首放`)
     return R('pass', 'baseline-created', { runner: plan.runner, failing: names,
-      messages: [`已建立基线：${names.length} 个既有失败记为已知，只拦新增${selection ? `（注意：本次为子集跑测，基线仅覆盖 ${selection.note}）` : ''}`] })
+      messages: [`已建立基线：${names.length} 个既有失败记为已知，只拦新增`] })
+  }
+
+  // 基线不完整（旧版子集基线 / 只有输出签名的不可解析基线）：
+  // 此刻拿到的是全量可解析红盘，用它补全基线，绝不把未纳入基线的既有红当成新增失败。
+  if (base.partial || ((base.failing || []).length === 0 && base.signature)) {
+    saveBaseline(st, projectRoot, { failing: names, signature: outSig, failedCount })
+    clearMarker()
+    const why = base.partial ? '原有基线仅覆盖 TIA 子集' : '原有基线只有输出签名、无失败名'
+    log(st, `基线补全（${why}）→ ${names.length} 个已知失败`)
+    return R('pass', 'baseline-completed', { runner: plan.runner, failing: names,
+      messages: [`${why}；已用本次全量结果补全为 ${names.length} 个已知失败，只拦后续新增`] })
   }
 
   const known = new Set(base.failing || [])
@@ -653,8 +705,13 @@ export function status(projectRoot) {
   let logTail = []
   try { logTail = fs.readFileSync(st.logPath, 'utf8').trim().split('\n').slice(-8) } catch {}
   // 改动面分类（联动测试提示）：后端侧与前端侧同轮都命中 → 提示触发 e2e 联动回归（只提示不自动跑）
-  const backendHit = dirty.some(f => /^(src|lib|pkg|cmd|server|api|backend)\//i.test(f))
-  const frontendHit = dirty.some(f => /^(webui|ui|front|frontend|client|www|static|public)\//i.test(f) || /\.(html|css|vue|jsx|tsx)$/i.test(f))
+  // 注意：React/Vue 等前端源码也常放 src/，所以 backend 判据排除前端扩展名与前端目录，
+  // 否则改一个 src/App.tsx 会同时命中两侧、把 jointE2eSuggested 误报成 true。
+  const FRONTEND_EXT = /\.(html|htm|css|scss|less|vue|svelte|jsx|tsx)$/i
+  const FRONTEND_DIR = /^(webui|ui|front|frontend|client|www|static|public|pages|components|styles|assets)\//i
+  const backendHit = dirty.some(f => /^(server|api|backend)\//i.test(f)
+    || (/^(src|lib|pkg|cmd)\//i.test(f) && !FRONTEND_EXT.test(f) && !FRONTEND_DIR.test(f)))
+  const frontendHit = dirty.some(f => FRONTEND_DIR.test(f) || FRONTEND_EXT.test(f))
   return { projectRoot, stateDir: st.stateDir, detectedRunner: plan ? plan.runner : null,
     dirty, baseline: baseline ? {
       at: baseline.at, count: baseline.count, failing: baseline.failing,

@@ -32,7 +32,8 @@ e2e-suite/                 唯一插件（一体化）
   ├─ lib/family.mjs        家族成员发现与 before/after 拓扑编排
   ├─ hooks/                ZCode Stop/PostToolUse 薄壳
   └─ mcp/server.mjs        MCP stdio 薄壳
-tests/gate-core.test.mjs   门禁与编排的回归测试（node --test，零依赖）
+tests/unit/gate-core.test.mjs  门禁与编排的回归测试（node --test，零依赖）
+.github/workflows/test.yml     CI：Node 20/22 × Ubuntu/Windows + 版本号一致性
 tools/bump.mjs             统一五处版本号（发版必跑，否则客户端更新不到）
 tools/sync.mjs             本机已安装插件/运行时 → 本仓库（维护者同步改动）
 tools/install.mjs          本仓库 → 本机运行时（维护者热调，版本门控）
@@ -47,7 +48,7 @@ ZCode 的插件更新是**版本号驱动**的：`marketplace.json` 里的 `vers
 ```bash
 node tools/bump.mjs 1.3.0     # 统一 package.json / 两份 marketplace / plugin.json / server.mjs
 # 在 CHANGELOG.md 顶部追加本次条目（新增/修复/变更三栏，只记对外行为）
-node --test tests/gate-core.test.mjs
+npm test
 git add -A && git commit -m "..." && git push
 ```
 
@@ -67,7 +68,7 @@ zcode plugins update e2e-suite@e2e-suite   # 先刷新市场再拉新版本
 | 工具 | 作用 | 典型场景 |
 |---|---|---|
 | `test_gate_status` | 只读查询：检测到的测试栈、脏文件、基线（已知失败）、抖动隔离区、日志尾部 | 想知道"门禁现在怎么看这个项目" |
-| `test_gate_run` | 立即完整跑一次判定（构建+测试+基线比对），不等 Stop 事件 | 想现在就要红绿灯结论（CI 式触发） |
+| `test_gate_run` | 立即完整跑一次判定（构建+测试+基线比对），不等 Stop 事件。**会更新基线/绿史/脏标记**（与 Stop hook 共用同一份状态），不是只读查询 | 想现在就要红绿灯结论（CI 式触发） |
 | `test_gate_reset` | 清除该项目门禁状态（基线/绿史/脏标记），回到"首红重新立基线"的宽容态 | 确实要重新宽容存量红时 |
 | `family_skills` | **家族测试入口**：扫描契约块发现全部在册成员，返回清单（phase/inputs/outputs）+ 按 `before`/`after` 拓扑排出的执行计划（env→design→exec→assert→report，custom 按约束插入；成环会显式报告 conflicts） | 想知道"这个项目装了哪些家族成员、联动该按什么顺序跑"；拿到计划后用宿主 Skill 工具逐个加载执行 |
 
@@ -111,10 +112,12 @@ node e2e-suite/lib/gate-cli.mjs run /path/to/your-project    # 0=pass 1=block 3=
 ## 自测
 
 ```bash
-node --test tests/gate-core.test.mjs
+npm test          # 等价 node --test "tests/unit/**/*.test.mjs"
 ```
 
-覆盖：基线生命周期、TIA 子集跑测、各运行器失败名解析、超时/输出溢出、构建失败、跨盘符脏标记、家族拓扑编排与成环检测。
+测试放在 `tests/unit/`（本项目自己的命名空间规范）；`npm test` 用通配符交给 runner 发现，不写死单个文件名。CI 在 Node 20/22 × Ubuntu/Windows 上跑同一套。
+
+覆盖：基线生命周期（含 partial 基线补全）、TIA 子集跑测、各运行器失败名解析、超时/输出溢出、构建失败、跨盘符脏标记、Bash 外部写入兜底、hook 容错、家族拓扑编排与成环检测。
 
 ## 家族契约（接入新成员）
 

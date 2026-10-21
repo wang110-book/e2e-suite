@@ -9,7 +9,7 @@
 import { findRoot, runGate, status, reset } from '../lib/gate-core.mjs'
 import { discoverFamily, buildPlan } from '../lib/family.mjs'
 
-const SERVER = { name: 'e2e-suite', version: '1.2.4' }
+const SERVER = { name: 'e2e-suite', version: '1.2.5' }
 
 // ---------- 家族契约发现（纯读，宿主无关） ----------
 // 扫描根：插件自带 skills/（权威发布源）+ 用户运行时 skills 目录 + 项目级 .zcode/skills。
@@ -24,7 +24,7 @@ const TOOLS = [
   },
   {
     name: 'test_gate_run',
-    description: '立即完整跑一次门禁（构建+测试+基线判定），不等 Stop 事件。会真实执行项目测试栈，大项目可达数分钟。返回 decision=pass|block 与失败明细。',
+    description: '立即完整跑一次门禁（构建+测试+基线判定），不等 Stop 事件。会真实执行项目测试栈，大项目可达数分钟。返回 decision=pass|block|unevaluated 与失败明细。注意：这是判定而非只读查询——它会按结果更新基线/绿史/脏标记（与 Stop hook 共用同一份状态）。只想看状态请用 test_gate_status。',
     inputSchema: { type: 'object', properties: { project_root: { type: 'string' } }, additionalProperties: false },
   },
   {

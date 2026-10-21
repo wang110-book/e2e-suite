@@ -3,6 +3,45 @@
 按 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 记录本插件**对外行为**的变化；内部重构与测试补充不单列。
 
+## 1.2.5 — 2026-10-21
+
+### 修复
+- **TIA 子集跑测会造出"假回归"**：子集红且基线不完整时，旧实现用子集结果建立 `partial` 基线，
+  之后跑到另一模块时，那条既有红不在基线里，被判成新增失败打回。现改为：子集红且无完整基线时
+  **退回全量跑测**再建基线；判定阶段遇到 `partial` 基线或"只有签名的不可解析基线"时，
+  用本次全量结果**补全**基线（`baseline-completed`），不再误报新增。
+- **pytest 失败名被断言消息污染**：`FAILED f::t - assert 1 == 2` 原先整行当比对 key，
+  断言值一变就成了"新增失败"。现在 key 只用 `file::test`，断言消息单独放在 `message` 字段。
+- **canary-bootstrap 永远无法被发现**：detached 判定用的是全文匹配，而该技能正文里
+  必须引用"家族契约（e2e-suite-暂停）"来解释自脱离，导致整份文件被判为已脱离。
+  改为只匹配**标题行**。新装环境此前只能发现 18 个成员，现为 19 个。
+- **Bash/sed/生成器改文件不触发门禁**：PostToolUse 只覆盖 Edit/Write，外部写入不记脏，
+  Stop 时命中 `clean-turn` 直接放行（假绿）。现在无脏标记时用 `git status` 兜底判断工作区是否变化；
+  `TEST_GATE_GIT_CHECK=0` 可关闭。
+- **门禁自身崩溃会阻塞会话**：Stop hook 现在捕获 `runGate` 异常，按 `unevaluated` 放行并告警
+  （此前未捕获异常导致非零退出 = 会话卡住），违背"门禁坏了不卡人"的承诺。
+- **构建失败被 clean-turn 吞掉**：构建红时不再清除脏标记，避免下一回合"没再改文件"直接放行。
+- **前后端改动面误报**：`src/` 下的 React/Vue 源码（`.tsx`/`.vue` 等）不再计入 backend 侧，
+  改一个前端组件不会再让 `jointE2eSuggested` 变成 true。
+
+### 变更
+- `tools/install.mjs` 默认**不再**把家族技能复制到 `~/.zcode/skills/`（插件整包已自带，
+  双份副本会导致发现顺序不确定）；需要旧宿主兼容时加 `--legacy-skills`。
+- `tools/sync.mjs` 以插件缓存为唯一数据源（`~/.zcode/skills/` 仅在缓存不可用时退回）。
+- Stop hook 超时 900s → 1200s，`.mcp.json` `timeoutMs` 900000 → 1200000：
+  CMake 栈最坏 360(构建)+240(测试)+240(抖动重跑)=840s，原上限已无余量。
+- `test_gate_run` 的 MCP 描述明确标注它会更新基线/绿史/脏标记（不是只读查询）。
+- 家族契约成员表补全 test-namespace / tdd-loop / canary-bootstrap，移除尚未实现的
+  `platform-setup` 条目；`suite-contract.md` 与总控 SKILL.md 的成员清单对齐。
+
+### 工程
+- 测试迁到 `tests/unit/`（符合本项目自己的命名空间规范），`npm test` 改用通配符交给 runner 发现。
+- 新增 `.github/workflows/test.yml`：Node 20/22 × Ubuntu/Windows + 版本号一致性检查。
+- `package.json` 加 `engines.node >= 20.11`（代码使用 `import.meta.dirname`）。
+- 补 6 条回归测试覆盖上述修复；原有 2 条恒真/未真正验证的用例已改为真实断言
+  （构建失败状态机改为注入式假计划，可完整验证首红→打回→恢复）。
+- 写入路径不再对非源码文件（图片/压缩包/大文档）整份读入内存做命名空间判定。
+
 ## 1.2.4 — 2026-10-20
 
 ### 新增

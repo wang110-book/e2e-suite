@@ -2,9 +2,14 @@
 // install.mjs — 本仓库 → 本机 ZCode 运行时（维护者部署用；普通用户走插件市场安装）
 //
 // 数据去向（2026-10-18 改版：旧 dev-default-plugins 市场已删除，指向它的部署路径已不存在）：
-//   1) 家族技能 → ~/.zcode/skills/<name>     ——总控动态发现依赖它们在此
-//   2) 门禁 3 技能 + lib/hooks/mcp → e2e-suite 已安装插件缓存（版本门控，见下）
+//   1) 门禁 3 技能 + 全部技能 + lib/hooks/mcp → e2e-suite 已安装插件缓存（版本门控，见下）
+//   2) 可选：家族技能额外复制到 ~/.zcode/skills/（默认不做，见 --legacy-skills）
 // 插件的正式发布路径是市场安装（zcode plugins update），install 只做维护者本机热调。
+//
+// 为什么默认不再复制到 ~/.zcode/skills/：
+//   插件整包已自带全部 22 个技能，再复制一份到用户级目录会让同一技能存在两个副本——
+//   家族发现先命中插件根、再命中用户根，两份不同步时（用户根是旧的）会出现"看到的成员
+//   是新版还是旧版取决于谁先被读到"。需要兼容旧宿主时才显式加 --legacy-skills。
 //
 // 版本门控：缓存目录按发布版本号固化（cache/e2e-suite/e2e-suite/<ver>/）。
 // 只有当仓库 package.json 版本与已安装版本一致时才推——把仓库的新实现混进旧版本
@@ -12,7 +17,7 @@
 // 仓库版本领先已安装 = 该发版了：先 bump/提交/推送，再客户端 plugins update。
 //
 // 幂等：内容相同跳过；不同则覆盖（运行时改动请先用 sync.mjs 回仓库）。
-// 用法：node tools/install.mjs [--dry]
+// 用法：node tools/install.mjs [--dry] [--legacy-skills]
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -21,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ZCODE = path.join(os.homedir(), '.zcode');
 const DRY = process.argv.includes('--dry');
+const LEGACY = process.argv.includes('--legacy-skills');
 
 const PKG = path.join(REPO, 'e2e-suite');
 const SKILLS_DST = path.join(ZCODE, 'skills');
@@ -59,11 +65,16 @@ function installedPlugin() {
 }
 
 let changed = 0;
-for (const s of FAMILY_SKILLS) {
-  const src = path.join(PKG, 'skills', s);
-  if (!fs.existsSync(src)) { console.log(`SKIP  skills/${s}（仓库缺）`); continue; }
-  const n = copyTree(src, path.join(SKILLS_DST, s));
-  if (n) { console.log(`INSTALL  ~/.zcode/skills/${s}（${n}）`); changed += n; }
+if (LEGACY) {
+  console.log('（--legacy-skills：额外复制家族技能到 ~/.zcode/skills/，仅旧宿主兼容需要）');
+  for (const s of FAMILY_SKILLS) {
+    const src = path.join(PKG, 'skills', s);
+    if (!fs.existsSync(src)) { console.log(`SKIP  skills/${s}（仓库缺）`); continue; }
+    const n = copyTree(src, path.join(SKILLS_DST, s));
+    if (n) { console.log(`INSTALL  ~/.zcode/skills/${s}（${n}）`); changed += n; }
+  }
+} else {
+  console.log('（跳过 ~/.zcode/skills/：插件整包已自带全部技能，不再复制第二份；需要时加 --legacy-skills）');
 }
 
 const repoVersion = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).version;

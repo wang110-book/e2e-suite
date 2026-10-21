@@ -17,7 +17,9 @@ export const PHASE_ORDER = ['env', 'design', 'exec', 'assert', 'report']
 const KNOWN_PHASES = new Set([...PHASE_ORDER, 'custom'])
 
 const CONTRACT_HEAD = /^##\s*家族契约（e2e-suite）\s*$/m
-const CONTRACT_DETACHED = /家族契约（e2e-suite-暂停）/
+// detached 只认**标题行**。曾用全文匹配，结果 canary-bootstrap 因为在正文里引用
+// "家族契约（e2e-suite-暂停）"来解释自脱离机制，被整份判成 detached 而永久消失。
+const CONTRACT_DETACHED = /^##\s*家族契约（e2e-suite-暂停）\s*$/m
 
 export function skillSearchRoots(projectRoot) {
   const here = path.dirname(fileURLToPath(import.meta.url))
